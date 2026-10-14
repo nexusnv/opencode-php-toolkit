@@ -18,6 +18,33 @@ Published package (after `npm publish`):
 }
 ```
 
+From git (no npm publish needed — `dist/` is committed, so clones work
+as-is; always run `npm run build` before committing):
+
+```sh
+# Latest on main
+opencode plugin add github:nexusnv/opencode-php-toolkit
+# Pinned (recommended for teams)
+opencode plugin add github:nexusnv/opencode-php-toolkit#v0.1.0
+```
+
+Or per-project in `opencode.jsonc` (same spec forms, plus branch/commit):
+
+```jsonc
+{
+  "plugins": [
+    "github:nexusnv/opencode-php-toolkit#v0.1.0",
+    "github:nexusnv/opencode-php-toolkit#main",
+    "git+ssh://git@github.com/nexusnv/opencode-php-toolkit.git#6eb66d4"
+  ]
+}
+```
+
+> Note: some environments disable git dependency fetching (`EALLOWGIT` /
+> `git dep preparation failed`). That is a local npm policy, not a repo
+> problem — on such machines use the local path form below or the npm
+> package instead.
+
 Local dev:
 
 ```jsonc
