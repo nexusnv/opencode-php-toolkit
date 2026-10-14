@@ -14,7 +14,7 @@ Published package (after `npm publish`):
 // opencode.jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["opencode-php-toolkit@0.1.0"]
+  "plugins": ["opencode-php-toolkit@0.1.1"]
 }
 ```
 
@@ -25,7 +25,7 @@ as-is; always run `npm run build` before committing):
 # Latest on main
 opencode plugin add github:nexusnv/opencode-php-toolkit
 # Pinned (recommended for teams)
-opencode plugin add github:nexusnv/opencode-php-toolkit#v0.1.0
+opencode plugin add github:nexusnv/opencode-php-toolkit#v0.1.1
 ```
 
 Or per-project in `opencode.jsonc` (same spec forms, plus branch/commit):
@@ -33,7 +33,7 @@ Or per-project in `opencode.jsonc` (same spec forms, plus branch/commit):
 ```jsonc
 {
   "plugins": [
-    "github:nexusnv/opencode-php-toolkit#v0.1.0",
+    "github:nexusnv/opencode-php-toolkit#v0.1.1",
     "github:nexusnv/opencode-php-toolkit#main",
     "git+ssh://git@github.com/nexusnv/opencode-php-toolkit.git#6eb66d4"
   ]
