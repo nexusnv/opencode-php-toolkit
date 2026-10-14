@@ -1,0 +1,75 @@
+# opencode-php-toolkit
+
+Framework-agnostic PHP toolkit for OpenCode v2. Hard-to-miss defaults for PHP 8.1+ developers: review, static analysis, tests, security, modernize, composer, architecture, debug.
+
+Laravel/Symfony specifics live in sibling repos (`opencode-laravel-toolkit`, `opencode-symfony-toolkit`). This package never assumes a framework — it detects and defers.
+
+Built on the newest v2 plugin framework: `Plugin.define({ id, setup(ctx) })` + `ctx.skill/command/tool.transform` + `ctx.session.hook`. See https://opencode.ai/v2/docs/build/plugins.
+
+## Install
+
+Published package (after `npm publish`):
+
+```jsonc
+// opencode.jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["opencode-php-toolkit@0.1.0"]
+}
+```
+
+Local dev:
+
+```jsonc
+{
+  "plugins": ["file:///home/leonidas/dev/nexusnv/opencode-php-toolkit"]
+}
+```
+
+Or CLI:
+
+```sh
+opencode plugin add file:///home/leonidas/dev/nexusnv/opencode-php-toolkit
+```
+
+## What you get
+
+- Agents (`agents/php-*.md`, `mode: subagent`): `php-reviewer`, `php-debugger`, `php-modernizer`, `php-tester`. Copied to `~/.config/opencode/agents/` on install as convenience (v2 `AgentEditor` has no `add`; transforms can't create agents — files are the source of truth).
+- Skills (8, autoinvoke): `php-standards`, `php-static-analysis`, `php-testing`, `php-security`, `php-modernize`, `php-composer`, `php-architecture`, `php-debug`.
+- Commands (7): `/php-review`, `/php-analyze`, `/php-fix-style`, `/php-test`, `/php-audit`, `/php-upgrade`, `/php-scaffold`.
+- Tools (`php_*` namespace, read-only): `php_project_detect`, `php_lint`, `php_composer_audit`.
+- Hooks: `prompt` tags PHP context, `context` adds typed-PHP system hint, `tool.execute.before` warns on destructive `composer update` / `rector process` without `--dry-run` / `php-cs-fixer fix` without `--dry-run`.
+
+## Verify
+
+```sh
+npm install
+npm run typecheck
+npm run build
+node -e "import('./dist/index.js').then(m=>console.log(m.default.id))"
+php -l src/index.ts 2>/dev/null || true
+php -l fixtures/php-sample/src/Calculator.php
+```
+
+## Layout
+
+```
+index.js — package entrypoint shim (required: OpenCode loads a plugin
+  directory via <dir>/index.ts|index.js, not package.json main).
+  Re-exports ./dist/index.js. Keep it in `files` for publishing.
+src/index.ts — Plugin.define entry
+src/content.ts — markdown loader + skill/command manifests
+src/tools/detect.ts — composer.json intel, no exec
+src/tools/php-tools.ts — php -l, composer validate/audit (read-only, timeouts, AbortSignal)
+src/hooks/php-context.ts — system hint, triggers, destructive-pattern guard
+agents/php-*.md, commands/php-*.md, skills/php-*/SKILL.md
+fixtures/php-sample/ — minimal PSR-4 app for smoke tests
+```
+
+> Sibling plugins (`opencode-laravel-toolkit`, `opencode-symfony-toolkit`)
+> must follow the same layout: root `index.js` shim + `dist/` build +
+> `php-*`-style ID prefix (`laravel-*`, `symfony-*`) to avoid collisions.
+
+## License
+
+MIT — NexusNV.
