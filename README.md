@@ -100,3 +100,14 @@ fixtures/php-sample/ — minimal PSR-4 app for smoke tests
 ## License
 
 MIT — NexusNV.
+
+## Releasing
+
+1. `npm run build` (commits fresh `dist/` — required for git installs).
+2. Bump `version` in `package.json`, commit, tag `vX.Y.Z`, push all three.
+3. `npm publish --no-provenance` (local publishes can't attest; use a
+   Trusted Publishing workflow instead if you want provenance).
+4. Fresh versions take a few minutes to appear (staged `0.0.0-stage`
+   placeholder first). Machines with `min-release-age` in `~/.npmrc` won't
+   `plugin add` them until that age passes — allow `0` temporarily to
+   verify, then restore.
