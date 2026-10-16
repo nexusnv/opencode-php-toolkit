@@ -2,6 +2,7 @@ import { Plugin } from "@opencode/plugin";
 import { COMMAND_DEFS, SKILL_IDS, loadText, parseFrontmatter } from "./content.js";
 import { detectPhpProject, formatDetection } from "./tools/detect.js";
 import { composerAudit, composerValidate, phpLint } from "./tools/php-tools.js";
+import { MetricsStore, formatMetricsSnapshot } from "./metrics/store.js";
 import { PHP_SYSTEM_HINT, PHP_TRIGGER, isDestructiveShell } from "./hooks/php-context.js";
 
 function skillTitle(id: string): string {
@@ -15,6 +16,9 @@ export default Plugin.define({
   id: "php-toolkit",
   async setup(ctx) {
     const dir = ctx.location.directory;
+    const metrics = new MetricsStore(ctx.storage);
+    await metrics.init();
+
     const registrations: Array<{ dispose: () => Promise<void> }> = [];
     const track = <T extends { dispose: () => Promise<void> }>(r: T): T => {
       registrations.push(r);
@@ -73,6 +77,7 @@ export default Plugin.define({
               name: c.name,
               description: c.description,
               execute: async ({ sessionID, prompt, delivery }) => {
+                await metrics.recordCommand({ name: c.name });
                 const args = prompt.text.trim();
                 const text = c.template.includes("$ARGUMENTS")
                   ? c.template.replaceAll("$ARGUMENTS", args)
@@ -136,6 +141,15 @@ export default Plugin.define({
               return { content: await composerAudit(cwd, context.signal) };
             },
           });
+          editor.add({
+            name: "metrics",
+            description: "Show local PHP toolkit usage metrics snapshot (tool runs, ok/error outcomes, command usage, prompt trigger hits). Local-only data, never leaves the machine.",
+            input: { type: "object", properties: {}, additionalProperties: false },
+            options: { namespace: "php" },
+            execute: async () => {
+              return { content: formatMetricsSnapshot(metrics.getSnapshot()) };
+            },
+          });
         }),
       );
     } catch (err) {
@@ -145,10 +159,11 @@ export default Plugin.define({
     // ---- Hooks ----
     try {
       track(
-        await ctx.session.hook("prompt", (event) => {
+        await ctx.session.hook("prompt", async (event) => {
           try {
             if (PHP_TRIGGER.test(event.prompt.text)) {
               event.metadata = { ...(event.metadata ?? {}), "php-toolkit": true };
+              await metrics.recordTrigger();
             }
           } catch {
             // never break admission
@@ -158,6 +173,13 @@ export default Plugin.define({
       track(
         await ctx.session.hook("context", (event) => {
           event.system.push({ type: "text", text: PHP_SYSTEM_HINT });
+        }),
+      );
+      track(
+        await ctx.tool.hook("execute.after", async (event) => {
+          if (!event.tool.startsWith("php_")) return;
+          const status: "ok" | "error" = event.status === "error" ? "error" : "ok";
+          await metrics.recordTool({ tool: event.tool, status });
         }),
       );
       track(
