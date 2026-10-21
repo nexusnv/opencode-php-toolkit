@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatMetricsSnapshot } from "../src/metrics/format.js";
+import { formatMetricsSnapshot, type ProjectScan } from "../src/metrics/format.js";
 import type { PhpToolkitMetrics } from "../src/metrics/store.js";
 
 function metrics(overrides: Partial<PhpToolkitMetrics> = {}): PhpToolkitMetrics {
@@ -15,12 +15,20 @@ function metrics(overrides: Partial<PhpToolkitMetrics> = {}): PhpToolkitMetrics 
   };
 }
 
+function scan(overrides: Partial<ProjectScan> = {}): ProjectScan {
+  return { projects: [], truncated: false, failed: false, ...overrides };
+}
+
 describe("formatMetricsSnapshot", () => {
   it("names the project so the snapshot is about the right codebase", () => {
     const out = formatMetricsSnapshot(metrics());
     expect(out).toContain("my-app");
-    expect(out).toContain("/home/dev/my-app");
-    expect(out).toContain("local-only");
+    expect(out).toContain("stored locally");
+  });
+
+  it("never discloses the absolute project path", () => {
+    const out = formatMetricsSnapshot(metrics());
+    expect(out).not.toContain("/home/dev/my-app");
   });
 
   it("says so plainly when nothing has been tracked yet", () => {
@@ -93,31 +101,49 @@ describe("formatMetricsSnapshot", () => {
           php_lint: { runs: 2, ok: 2, error: 0, findings: 1, lastUsedAt: "", lastStatus: "ok" },
         },
       }),
-      [
-        metrics({
-          projectName: "other-app",
-          projectPath: "/home/dev/other-app",
-          triggerHits: 4,
-          tools: {
-            php_lint: { runs: 5, ok: 5, error: 0, findings: 7, lastUsedAt: "", lastStatus: "ok" },
-          },
-        }),
-      ],
+      scan({
+        projects: [
+          metrics({
+            projectName: "other-app",
+            projectPath: "/home/dev/other-app",
+            triggerHits: 4,
+            tools: {
+              php_lint: { runs: 5, ok: 5, error: 0, findings: 7, lastUsedAt: "", lastStatus: "ok" },
+            },
+          }),
+        ],
+      }),
     );
     expect(out).toContain("All projects on this machine");
     expect(out).toContain("other-app");
-    expect(out).toContain("(this project)");
     expect(out).toContain("TOTAL");
     expect(out).toContain("7 runs");
     expect(out).toContain("1 prompt");
     expect(out).toContain("4 prompts");
   });
 
+  it("marks an unavailable cross-project view instead of showing an empty one", () => {
+    const out = formatMetricsSnapshot(metrics(), scan({ failed: true }));
+    expect(out).toContain("unavailable");
+    expect(out).not.toContain("no other project has been tracked yet");
+  });
+
+  it("marks a truncated cross-project view as partial", () => {
+    const out = formatMetricsSnapshot(
+      metrics(),
+      scan({
+        projects: [metrics({ projectName: "other-app", tools: {}, commands: {} })],
+        truncated: true,
+      }),
+    );
+    expect(out).toContain("partial");
+  });
+
   it("handles a project that has never been touched", () => {
-    const out = formatMetricsSnapshot(metrics(), [
-      metrics({ projectName: "", projectPath: "", tools: {}, commands: {} }),
-    ]);
+    const out = formatMetricsSnapshot(
+      metrics(),
+      scan({ projects: [metrics({ projectName: "", projectPath: "", tools: {}, commands: {} })] }),
+    );
     expect(out).toContain("unknown");
-    expect(out).toContain("0 runs");
   });
 });

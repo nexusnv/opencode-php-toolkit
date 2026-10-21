@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  LEGACY_STORAGE_KEY,
   MetricsStore,
   deserialize,
   projectKey,
@@ -13,13 +14,20 @@ function fakeStorage(seed: Record<string, unknown> = {}) {
   const set = vi.fn(async (key: string, value: unknown) => {
     data.set(key, value);
   });
-  const scan = vi.fn(async (options: { prefix: string }) => ({
-    entries: [...data.entries()]
+  const remove = vi.fn(async (key: string) => {
+    data.delete(key);
+  });
+  const scan = vi.fn(async (options: { prefix: string; after?: string }) => {
+    const tuples = [...data.entries()]
       .filter(([key]) => key.startsWith(options.prefix))
-      .map(([key, value]) => ({ key, value })),
-  }));
-  const storage: MetricsStorage = { get, set, scan };
-  return { storage, data, get, set, scan };
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    const after = options.after;
+    const start = after ? tuples.findIndex(([key]) => key > after) : 0;
+    const page = tuples.slice(start === -1 ? tuples.length : start);
+    return { entries: page.map(([key, value]) => ({ key, value })) };
+  });
+  const storage: MetricsStorage = { get, set, remove, scan };
+  return { storage, data, get, set, remove, scan };
 }
 
 const PROJECT = { name: "my-app", path: "/home/dev/my-app" };
@@ -40,17 +48,18 @@ describe("project scoping", () => {
 describe("deserialize", () => {
   it("returns defaults for missing or non-object data", () => {
     for (const raw of [undefined, null, "nope", 42, []]) {
-      const doc = deserialize(raw, PROJECT);
-      expect(doc.version).toBe(2);
-      expect(doc.tools).toEqual({});
-      expect(doc.commands).toEqual({});
-      expect(doc.triggerHits).toBe(0);
-      expect(doc.projectName).toBe("my-app");
+      const { metrics, supported } = deserialize(raw, PROJECT);
+      expect(supported).toBe(true);
+      expect(metrics.version).toBe(2);
+      expect(metrics.tools).toEqual({});
+      expect(metrics.commands).toEqual({});
+      expect(metrics.triggerHits).toBe(0);
+      expect(metrics.projectName).toBe("my-app");
     }
   });
 
   it("keeps a current document", () => {
-    const doc = deserialize(
+    const { metrics } = deserialize(
       {
         version: 2,
         startedAt: "2026-01-01T00:00:00.000Z",
@@ -62,14 +71,14 @@ describe("deserialize", () => {
       },
       PROJECT,
     );
-    expect(doc.triggerHits).toBe(7);
-    expect(doc.tools.php_lint.findings).toBe(2);
-    expect(doc.tools.php_lint.runs).toBe(3);
-    expect(doc.commands["php-review"].count).toBe(2);
+    expect(metrics.triggerHits).toBe(7);
+    expect(metrics.tools.php_lint.findings).toBe(2);
+    expect(metrics.tools.php_lint.runs).toBe(3);
+    expect(metrics.commands["php-review"].count).toBe(2);
   });
 
   it("migrates the v1 shape forward instead of discarding it", () => {
-    const doc = deserialize(
+    const { metrics, supported } = deserialize(
       {
         version: 1,
         startedAt: "2026-01-01T00:00:00.000Z",
@@ -81,10 +90,11 @@ describe("deserialize", () => {
       },
       PROJECT,
     );
-    expect(doc.version).toBe(2);
-    expect(doc.startedAt).toBe("2026-01-01T00:00:00.000Z");
-    expect(doc.triggerHits).toBe(4);
-    expect(doc.tools.php_lint).toEqual({
+    expect(supported).toBe(true);
+    expect(metrics.version).toBe(2);
+    expect(metrics.startedAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(metrics.triggerHits).toBe(4);
+    expect(metrics.tools.php_lint).toEqual({
       runs: 5,
       ok: 4,
       error: 1,
@@ -92,17 +102,16 @@ describe("deserialize", () => {
       lastUsedAt: "x",
       lastStatus: "error",
     });
-    expect(doc.commands["php-review"].count).toBe(1);
+    expect(metrics.commands["php-review"].count).toBe(1);
   });
 
-  it("discards documents from a newer format rather than misreading them", () => {
-    const doc = deserialize({ version: 99, triggerHits: 12, tools: { php_lint: { runs: 3 } } }, PROJECT);
-    expect(doc.triggerHits).toBe(0);
-    expect(doc.tools).toEqual({});
+  it("marks a document from a newer format as unsupported", () => {
+    const { supported } = deserialize({ version: 99, triggerHits: 12 }, PROJECT);
+    expect(supported).toBe(false);
   });
 
   it("drops corrupt entries instead of producing NaN counters", () => {
-    const doc = deserialize(
+    const { metrics } = deserialize(
       {
         version: 2,
         triggerHits: "not a number",
@@ -115,13 +124,13 @@ describe("deserialize", () => {
       },
       PROJECT,
     );
-    expect(doc.triggerHits).toBe(0);
-    expect(doc.tools.good.findings).toBe(1);
-    expect(doc.tools.bad).toBeUndefined();
-    expect(doc.tools.partial.runs).toBe(0);
-    expect(doc.tools.partial.ok).toBe(0);
-    expect(Number.isNaN(doc.tools.partial.runs)).toBe(false);
-    expect(doc.commands.broken).toBeUndefined();
+    expect(metrics.triggerHits).toBe(0);
+    expect(metrics.tools.good.findings).toBe(1);
+    expect(metrics.tools.bad).toBeUndefined();
+    expect(metrics.tools.partial.runs).toBe(0);
+    expect(metrics.tools.partial.ok).toBe(0);
+    expect(Number.isNaN(metrics.tools.partial.runs)).toBe(false);
+    expect(metrics.commands.broken).toBeUndefined();
   });
 });
 
@@ -135,18 +144,6 @@ describe("MetricsStore", () => {
     expect(snap.commands).toEqual({});
     expect(snap.triggerHits).toBe(0);
     expect(snap.projectPath).toBe("/home/dev/my-app");
-  });
-
-  it("keeps the document when the storage read fails", async () => {
-    const { storage } = fakeStorage();
-    storage.get = async () => {
-      throw new Error("disk on fire");
-    };
-    const store = new MetricsStore(storage, PROJECT);
-    await expect(store.init()).rejects.toThrow("disk on fire");
-    // The caller decides whether that is fatal; the store stays usable.
-    await store.recordTrigger();
-    expect(store.getSnapshot().triggerHits).toBe(1);
   });
 
   it("counts tool runs by outcome and findings", async () => {
@@ -190,8 +187,9 @@ describe("MetricsStore", () => {
     await store.recordTrigger();
     await store.flush();
 
-    expect(data.has(storageKeyFor("/home/dev/my-app"))).toBe(true);
-    expect((data.get(storageKeyFor("/home/dev/my-app")) as { triggerHits: number }).triggerHits).toBe(1);
+    const key = storageKeyFor("/home/dev/my-app");
+    expect(data.has(key)).toBe(true);
+    expect((data.get(key) as { triggerHits: number }).triggerHits).toBe(1);
   });
 
   it("coalesces a burst of events into a single write", async () => {
@@ -223,6 +221,14 @@ describe("MetricsStore", () => {
     }
   });
 
+  it("does not write when nothing changed", async () => {
+    const { storage, set } = fakeStorage();
+    const store = new MetricsStore(storage, PROJECT);
+    await store.init();
+    await store.flush();
+    expect(set).not.toHaveBeenCalled();
+  });
+
   it("keeps changes pending when the write fails", async () => {
     const { storage, set } = fakeStorage();
     const store = new MetricsStore(storage, PROJECT);
@@ -238,17 +244,96 @@ describe("MetricsStore", () => {
     expect(set).toHaveBeenCalledTimes(2);
   });
 
-  it("does not write when nothing changed", async () => {
-    const { storage, set } = fakeStorage();
+  it("never overwrites the stored document when the read failed", async () => {
+    const { storage, set, data } = fakeStorage({
+      [storageKeyFor(PROJECT.path)]: { version: 2, triggerHits: 9, tools: {}, commands: {} },
+    });
     const store = new MetricsStore(storage, PROJECT);
-    await store.init();
+    storage.get = async () => {
+      throw new Error("disk on fire");
+    };
+    await expect(store.init()).rejects.toThrow("disk on fire");
+    expect(store.canWrite).toBe(false);
+
+    await store.recordTrigger();
     await store.flush();
+
+    // The document that is on disk is untouched.
     expect(set).not.toHaveBeenCalled();
+    expect((data.get(storageKeyFor(PROJECT.path)) as { triggerHits: number }).triggerHits).toBe(9);
   });
 
-  it("lists the other projects tracked on this machine but not itself", async () => {
+  it("never overwrites a document written by a newer format", async () => {
+    const key = storageKeyFor(PROJECT.path);
+    const { storage, set, data } = fakeStorage({ [key]: { version: 99, triggerHits: 4 } });
+    const store = new MetricsStore(storage, PROJECT);
+    await store.init();
+    expect(store.canWrite).toBe(false);
+
+    await store.recordTrigger();
+    await store.flush();
+
+    expect(set).not.toHaveBeenCalled();
+    expect((data.get(key) as { version: number }).version).toBe(99);
+  });
+
+  it("merges concurrent updates instead of overwriting them", async () => {
+    const { storage, data } = fakeStorage();
+    const first = new MetricsStore(storage, PROJECT);
+    const second = new MetricsStore(storage, PROJECT);
+    await first.init();
+    await second.init();
+
+    await first.recordTrigger();
+    await second.recordCommand({ name: "php-review" });
+    await first.flush();
+    await second.flush();
+
+    const stored = data.get(storageKeyFor(PROJECT.path)) as {
+      triggerHits: number;
+      commands: Record<string, { count: number }>;
+    };
+    expect(stored.triggerHits).toBe(1);
+    expect(stored.commands["php-review"].count).toBe(1);
+  });
+
+  it("adopts the machine-global document left by the first implementation", async () => {
+    const { storage, data, remove } = fakeStorage({
+      [LEGACY_STORAGE_KEY]: {
+        version: 1,
+        startedAt: "2026-01-01T00:00:00.000Z",
+        triggerHits: 3,
+        tools: { php_lint: { count: 2, okCount: 2, errorCount: 0 } },
+        commands: {},
+      },
+    });
+    const store = new MetricsStore(storage, PROJECT);
+    await store.init();
+
+    const snap = store.getSnapshot();
+    expect(snap.triggerHits).toBe(3);
+    expect(snap.tools.php_lint.runs).toBe(2);
+    // The legacy document is claimed, so a second project does not adopt it too.
+    expect(remove).toHaveBeenCalledWith(LEGACY_STORAGE_KEY);
+    expect(data.has(LEGACY_STORAGE_KEY)).toBe(false);
+  });
+
+  it("leaves the legacy document alone when the project already has one", async () => {
+    const { storage, remove } = fakeStorage({
+      [LEGACY_STORAGE_KEY]: { version: 1, triggerHits: 3 },
+      [storageKeyFor(PROJECT.path)]: { version: 2, triggerHits: 1, tools: {}, commands: {} },
+    });
+    const store = new MetricsStore(storage, PROJECT);
+    await store.init();
+    expect(remove).not.toHaveBeenCalled();
+    expect(store.getSnapshot().triggerHits).toBe(1);
+  });
+
+  it("lists the other projects but not itself", async () => {
+    const own = storageKeyFor(PROJECT.path);
     const other = storageKeyFor("/home/dev/other-app");
     const { storage } = fakeStorage({
+      [own]: { version: 2, triggerHits: 5, tools: {}, commands: {}, projectName: "my-app" },
       [other]: {
         version: 2,
         startedAt: "2026-01-01T00:00:00.000Z",
@@ -261,21 +346,56 @@ describe("MetricsStore", () => {
     });
     const store = new MetricsStore(storage, PROJECT);
     await store.init();
-    await store.recordTrigger();
 
-    const others = await store.listOtherProjects();
-    expect(others).toHaveLength(1);
-    expect(others[0].projectName).toBe("other-app");
-    expect(others[0].tools.php_lint.findings).toBe(3);
+    const result = await store.listOtherProjects();
+    expect(result.failed).toBe(false);
+    expect(result.truncated).toBe(false);
+    expect(result.projects).toHaveLength(1);
+    expect(result.projects[0].projectName).toBe("other-app");
+    expect(result.projects[0].tools.php_lint.findings).toBe(3);
   });
 
-  it("survives a storage that cannot be scanned", async () => {
+  it("reports a failed scan instead of an empty result", async () => {
     const { storage } = fakeStorage();
     storage.scan = async () => {
       throw new Error("scan unsupported");
     };
     const store = new MetricsStore(storage, PROJECT);
     await store.init();
-    await expect(store.listOtherProjects()).resolves.toEqual([]);
+    const result = await store.listOtherProjects();
+    expect(result.failed).toBe(true);
+    expect(result.projects).toEqual([]);
+  });
+
+  it("follows every page of the scan", async () => {
+    const { storage } = fakeStorage();
+    const many: Record<string, unknown> = {};
+    for (let i = 0; i < 450; i++) {
+      many[storageKeyFor(`/home/dev/p${i}`)] = {
+        version: 2,
+        projectName: `p${i}`,
+        tools: {},
+        commands: {},
+        triggerHits: i,
+      };
+    }
+    const paged = fakeStorage(many);
+    let calls = 0;
+    paged.storage.scan = async (options) => {
+      const entries = [...paged.data.entries()]
+        .filter(([key]) => key.startsWith(options.prefix))
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([key, value]) => ({ key, value }));
+      const index = calls;
+      calls += 1;
+      const page = entries.slice(index * 200, (index + 1) * 200);
+      const next = (index + 1) * 200 < entries.length ? `page-${index}` : undefined;
+      return { entries: page, next };
+    };
+    const store = new MetricsStore(paged.storage, PROJECT);
+    await store.init();
+    const result = await store.listOtherProjects();
+    expect(result.truncated).toBe(false);
+    expect(result.projects.length).toBe(450);
   });
 });

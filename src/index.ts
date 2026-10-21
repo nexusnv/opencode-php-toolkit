@@ -3,7 +3,8 @@ import { Plugin } from "@opencode/plugin";
 import { COMMAND_DEFS, SKILL_IDS, loadText, parseFrontmatter } from "./content.js";
 import { detectPhpProject, formatDetection } from "./tools/detect.js";
 import { composerAudit, composerValidate, phpLint, type ToolOutcome } from "./tools/php-tools.js";
-import { MetricsStore, type MetricsProject } from "./metrics/store.js";
+import { MetricsRegistry, resolveProjectScope } from "./metrics/registry.js";
+import type { MetricsProject } from "./metrics/store.js";
 import { formatMetricsSnapshot } from "./metrics/format.js";
 import { PHP_SYSTEM_HINT, PHP_TRIGGER, isDestructiveShell } from "./hooks/php-context.js";
 
@@ -19,9 +20,9 @@ export default Plugin.define({
   async setup(ctx) {
     const dir = ctx.location.directory;
     const project: MetricsProject = { name: basename(dir) || dir, path: dir };
-    const metrics = new MetricsStore(ctx.storage, project);
+    const metrics = new MetricsRegistry(ctx.storage, project);
     try {
-      await metrics.init();
+      await metrics.initActive();
     } catch (err) {
       // Metrics are optional: a storage failure must never take the toolkit down.
       console.error(`[php-toolkit] metrics unavailable: ${(err as Error).message}`);
@@ -34,18 +35,27 @@ export default Plugin.define({
      * status: the PHP tools return failures as text (a lint that finds a
      * broken file is a successful lint), so "did it run" and "did it find
      * problems" have to be reported separately.
+     *
+     * The result is attributed to the directory the tool actually worked in,
+     * so work done for another project does not land in this project's
+     * snapshot.
      */
     const tracked = <TInput>(
       name: string,
       run: (input: TInput, context: { signal: AbortSignal }) => Promise<ToolOutcome>,
     ) => {
       return async (input: unknown, context: { signal: AbortSignal }) => {
+        const requested = (input as { directory?: unknown } | undefined)?.directory;
+        const target =
+          typeof requested === "string" && requested ? requested : undefined;
+        const scope = resolveProjectScope(dir, target);
+        const store = metrics.storeFor(scope);
         try {
           const outcome = await run(input as TInput, context);
-          await metrics.recordTool({ tool: name, status: outcome.status, findings: outcome.findings });
+          await store.recordTool({ tool: name, status: outcome.status, findings: outcome.findings });
           return { content: outcome.text };
         } catch (err) {
-          await metrics.recordTool({ tool: name, status: "error", findings: 0 });
+          await store.recordTool({ tool: name, status: "error", findings: 0 });
           throw err;
         }
       };
@@ -109,7 +119,7 @@ export default Plugin.define({
               name: c.name,
               description: c.description,
               execute: async ({ sessionID, prompt, delivery }) => {
-                await metrics.recordCommand({ name: c.name });
+                await metrics.active.recordCommand({ name: c.name });
                 const args = prompt.text.trim();
                 const text = c.template.includes("$ARGUMENTS")
                   ? c.template.replaceAll("$ARGUMENTS", args)
@@ -136,11 +146,15 @@ export default Plugin.define({
             description: "Detect PHP project intel from composer.json/lock: PHP requirement, PSR-4 roots, PHPUnit/Pest/PHPStan/Psalm/CS-Fixer/Rector presence. No shell exec.",
             input: { type: "object", properties: { directory: { type: "string" } }, additionalProperties: false },
             options: { namespace: "php" },
-            execute: tracked("php_project_detect", async (input: { directory?: string }) => ({
-              text: formatDetection(await detectPhpProject(input.directory ?? dir)),
-              status: "ok",
-              findings: 0,
-            })),
+            execute: tracked("php_project_detect", async (input: { directory?: string }) => {
+              const info = await detectPhpProject(input.directory ?? dir);
+              return {
+                text: formatDetection(info),
+                status: "ok",
+                // A malformed manifest is a problem in the project.
+                findings: info.composerJsonError ? 1 : 0,
+              };
+            }),
           });
           editor.add({
             name: "lint",
@@ -180,7 +194,7 @@ export default Plugin.define({
           editor.add({
             name: "metrics",
             description:
-              "Show local PHP toolkit usage metrics for this project: tool runs, ok/error outcomes, issues surfaced, command usage, PHP prompt hits. Local-only data, never leaves the machine.",
+              "Show local PHP toolkit usage metrics for this project: tool runs, ok/error outcomes, issues surfaced, command usage, PHP prompt hits. Stored locally; the plugin sends no telemetry.",
             input: {
               type: "object",
               properties: {
@@ -194,11 +208,13 @@ export default Plugin.define({
             options: { namespace: "php" },
             // Deliberately not tracked: reading the snapshot must not change it.
             execute: async (input) => {
-              await metrics.flush();
-              const snapshot = metrics.getSnapshot();
+              // Write everything this process is holding before reading, so
+              // the machine-wide view is not missing our own pending events.
+              await metrics.flushAll();
+              const snapshot = metrics.active.getSnapshot();
               const all = (input as { allProjects?: boolean } | undefined)?.allProjects;
-              const others = all ? await metrics.listOtherProjects() : undefined;
-              return { content: formatMetricsSnapshot(snapshot, others) };
+              const scan = all ? await metrics.active.listOtherProjects() : undefined;
+              return { content: formatMetricsSnapshot(snapshot, scan) };
             },
           });
         }),
@@ -214,7 +230,7 @@ export default Plugin.define({
           try {
             if (PHP_TRIGGER.test(event.prompt.text)) {
               event.metadata = { ...(event.metadata ?? {}), "php-toolkit": true };
-              await metrics.recordTrigger();
+              await metrics.active.recordTrigger();
             }
           } catch {
             // never break admission
@@ -241,7 +257,7 @@ export default Plugin.define({
     }
 
     return async () => {
-      await metrics.flush().catch(() => {});
+      await metrics.flushAll();
       for (const r of registrations.splice(0)) {
         void r.dispose().catch(() => {});
       }

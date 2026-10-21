@@ -26,9 +26,7 @@ function toolLines(metrics) {
     return entries.map(([name, entry]) => {
         const runs = `${entry.runs} ${entry.runs === 1 ? "run" : "runs"}`;
         const outcomes = `${entry.ok} ok / ${entry.error} error`;
-        return [
-            `    ${pad(name, width)}  ${pad(runs, 8)}  ${pad(outcomes, 16)}  ${pad(plural(entry.findings, "finding"), 13)}  last ${formatTimestamp(entry.lastUsedAt)}`,
-        ].join("");
+        return `    ${pad(name, width)}  ${pad(runs, 8)}  ${pad(outcomes, 16)}  ${pad(plural(entry.findings, "finding"), 13)}  last ${formatTimestamp(entry.lastUsedAt)}`;
     });
 }
 function commandLines(metrics) {
@@ -38,18 +36,24 @@ function commandLines(metrics) {
     const width = Math.max(...entries.map(([name]) => name.length));
     return entries.map(([name, entry]) => `    ${pad(name, width)}  ${plural(entry.count, "invocation")}  last ${formatTimestamp(entry.lastUsedAt)}`);
 }
-function projectLines(projects) {
-    if (!projects.length)
-        return ["    (no other project has been tracked yet)"];
-    const rows = projects
+function projectLines(scan, current) {
+    if (scan.failed) {
+        return ["    (unavailable - the project list could not be read)"];
+    }
+    const rows = [
+        { metrics: current, current: true },
+        ...scan.projects.map((metrics) => ({ metrics, current: false })),
+    ]
         .map((p) => ({
-        name: p.metrics.projectName || p.metrics.projectPath || "unknown",
+        name: p.metrics.projectName || "unknown",
         runs: totalRuns(p.metrics),
         findings: totalFindings(p.metrics),
         prompts: p.metrics.triggerHits,
-        current: p.current === true,
+        current: p.current,
     }))
         .sort((a, b) => Number(b.current) - Number(a.current) || b.runs - a.runs);
+    if (!rows.length)
+        return ["    (no other project has been tracked yet)"];
     const width = Math.max(...rows.map((r) => r.name.length));
     const lines = rows.map((r) => {
         const label = r.current ? `${r.name} (this project)` : r.name;
@@ -59,19 +63,26 @@ function projectLines(projects) {
     const totalFindingsAll = rows.reduce((sum, r) => sum + r.findings, 0);
     const totalPromptsAll = rows.reduce((sum, r) => sum + r.prompts, 0);
     lines.push(`    ${pad("TOTAL", width)}  ${pad(`${totalRunsAll} runs`, 10)}  ${pad(plural(totalFindingsAll, "finding"), 11)}  ${plural(totalPromptsAll, "prompt")}`);
+    if (scan.truncated) {
+        lines.push("    (partial - more projects exist than could be listed)");
+    }
     return lines;
 }
 /**
  * Renders the metrics snapshot a user sees.
  *
- * `others` adds the cross-project breakdown (the toolkit tracks one document
+ * The snapshot is returned as tool output, so it can end up in a request to a
+ * remote model provider. It therefore contains no absolute paths, no file
+ * names and no code - only counts, timings and the project folder name.
+ *
+ * `scan` adds the cross-project breakdown (the toolkit tracks one document
  * per project root, so this is the machine-wide view).
  */
-export function formatMetricsSnapshot(m, others) {
+export function formatMetricsSnapshot(m, scan) {
     const findings = totalFindings(m);
     const lines = [
-        "PHP toolkit metrics (local-only, never leaves this machine)",
-        `  Project: ${m.projectName || "unknown"}  (${m.projectPath || "unknown"})`,
+        "PHP toolkit metrics (stored locally - the plugin sends no telemetry)",
+        `  Project: ${m.projectName || "unknown"}`,
         `  Tracking since: ${formatTimestamp(m.startedAt)}`,
         `  PHP-mentioning prompts: ${m.triggerHits}`,
         "",
@@ -83,8 +94,8 @@ export function formatMetricsSnapshot(m, others) {
         "",
         `  Impact: ${plural(findings, "issue")} surfaced by the toolkit in this project.`,
     ];
-    if (others) {
-        lines.push("", "  All projects on this machine", ...projectLines([{ metrics: m, current: true }, ...others.map((metrics) => ({ metrics }))]));
+    if (scan) {
+        lines.push("", "  All projects on this machine", ...projectLines(scan, m));
     }
     return lines.join("\n");
 }

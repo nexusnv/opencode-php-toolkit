@@ -5,6 +5,8 @@ import { PKG_ROOT } from "../content.js";
 export interface PhpProjectInfo {
   hasComposerJson: boolean;
   hasComposerLock: boolean;
+  /** Set when composer.json exists but could not be read or parsed. */
+  composerJsonError: string | null;
   phpRequirement: string | null;
   phpVersion: string | null;
   autoloadPsr4: Record<string, string>;
@@ -35,6 +37,7 @@ export async function detectPhpProject(directory: string): Promise<PhpProjectInf
   const empty: PhpProjectInfo = {
     hasComposerJson: false,
     hasComposerLock: false,
+    composerJsonError: null,
     phpRequirement: null,
     phpVersion: null,
     autoloadPsr4: {},
@@ -58,12 +61,21 @@ export async function detectPhpProject(directory: string): Promise<PhpProjectInf
   };
   try {
     const raw = await readFile(join(directory, "composer.json"), "utf8");
-    const composer = JSON.parse(raw) as {
+    let composer: {
       require?: Record<string, string>;
       ["require-dev"]?: Record<string, string>;
       autoload?: { ["psr-4"]?: Record<string, string> };
       scripts?: Record<string, string | string[]>;
     };
+    try {
+      composer = JSON.parse(raw) as typeof composer;
+    } catch (err) {
+      // A malformed manifest is a problem in the project - surface it instead
+      // of silently reporting "no composer.json".
+      empty.hasComposerJson = true;
+      empty.composerJsonError = (err as Error).message;
+      return empty;
+    }
     empty.hasComposerJson = true;
     empty.require = composer.require ?? {};
     empty.requireDev = composer["require-dev"] ?? {};
@@ -110,6 +122,9 @@ export function formatDetection(info: PhpProjectInfo): string {
     `composer.lock: ${info.hasComposerLock ? "yes" : "no"}`,
     `php requirement: ${info.phpRequirement ?? "unknown (recommend >=8.1)"}`,
   ];
+  if (info.composerJsonError) {
+    lines.push(`composer.json: MALFORMED - ${info.composerJsonError}`);
+  }
   const tools = Object.entries(info.detectedTools)
     .filter(([, v]) => v)
     .map(([k]) => k);

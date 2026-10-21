@@ -8,6 +8,7 @@ export async function detectPhpProject(directory) {
     const empty = {
         hasComposerJson: false,
         hasComposerLock: false,
+        composerJsonError: null,
         phpRequirement: null,
         phpVersion: null,
         autoloadPsr4: {},
@@ -31,7 +32,17 @@ export async function detectPhpProject(directory) {
     };
     try {
         const raw = await readFile(join(directory, "composer.json"), "utf8");
-        const composer = JSON.parse(raw);
+        let composer;
+        try {
+            composer = JSON.parse(raw);
+        }
+        catch (err) {
+            // A malformed manifest is a problem in the project - surface it instead
+            // of silently reporting "no composer.json".
+            empty.hasComposerJson = true;
+            empty.composerJsonError = err.message;
+            return empty;
+        }
         empty.hasComposerJson = true;
         empty.require = composer.require ?? {};
         empty.requireDev = composer["require-dev"] ?? {};
@@ -79,6 +90,9 @@ export function formatDetection(info) {
         `composer.lock: ${info.hasComposerLock ? "yes" : "no"}`,
         `php requirement: ${info.phpRequirement ?? "unknown (recommend >=8.1)"}`,
     ];
+    if (info.composerJsonError) {
+        lines.push(`composer.json: MALFORMED - ${info.composerJsonError}`);
+    }
     const tools = Object.entries(info.detectedTools)
         .filter(([, v]) => v)
         .map(([k]) => k);

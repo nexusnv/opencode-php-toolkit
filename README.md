@@ -74,7 +74,7 @@ working in:
 
 ```
 PHP toolkit metrics (local-only, never leaves this machine)
-  Project: my-app  (/home/dev/my-app)
+  Project: my-app
   Tracking since: 2026-10-21 09:00Z
   PHP-mentioning prompts: 12
 
@@ -88,27 +88,44 @@ PHP toolkit metrics (local-only, never leaves this machine)
   Impact: 2 issues surfaced by the toolkit in this project.
 ```
 
-- **Runs / ok / error** — how often a tool ran, and whether it could run at
-  all. A tool that could not run (missing `php`, timeout) is an *error*.
+- **Runs / ok / error** — how often a tool ran, and whether it completed the
+  work it was asked to do. A tool that could not complete it (missing `php`,
+  a timeout, a file it could not read) is an *error*.
 - **Findings** — issues the toolkit surfaced in your code: parse errors found
-  by `php_lint`, advisories reported by `php_composer_audit`, an invalid
-  `composer.json`. A lint that finds a broken file is a *successful* lint with
-  a finding, not an error.
+  by `php_lint`, advisories reported by `php_composer_audit`, a malformed or
+  invalid `composer.json`. A lint that finds a broken file is a *successful*
+  lint with a finding, not an error.
 - **Per project.** Each project root gets its own document, so the snapshot
-  describes the codebase you are in. Pass `allProjects: true` to
-  `php_metrics` for the machine-wide breakdown.
+  describes the codebase you are in. A tool pointed at a directory outside the
+  active project is counted against that directory instead, so one project's
+  numbers never absorb another's. Pass `allProjects: true` to `php_metrics`
+  for the machine-wide breakdown. That view is eventually consistent: a
+  session running elsewhere may still have unsaved events.
 
 ### Privacy
 
-Everything stays on your machine:
+Metrics themselves never leave your machine:
 
 - Metrics are written to OpenCode's local storage only
   (`~/.local/share/opencode/opencode.db`, key `php-toolkit.metrics.<hash>`).
-- Nothing is sent over the network. The plugin makes no outbound requests.
-- Only counts, timestamps and the project path are recorded - never file
+- The plugin makes no outbound requests of its own.
+- Only counts, timestamps and the project path are recorded — never file
   contents, file names, code or prompt text.
-- Deleting the row for a project removes its history; deleting the plugin
-  removes all of it.
+
+Two things worth knowing precisely:
+
+- **`php_composer_audit` does reach the network.** It runs `composer audit`,
+  which contacts the Composer advisory service to look up known
+  vulnerabilities. That request is made by Composer, on your behalf, when you
+  ask for the audit — the plugin does not transmit anything itself.
+- **The snapshot is tool output.** `php_metrics` returns the snapshot as tool
+  content, so with a remote model provider it is included in that request.
+  The snapshot therefore contains no absolute paths, no file names and no
+  code — only counts, timings and the project folder name.
+
+Removing the plugin does not delete the metrics: the rows stay in OpenCode's
+local database. To drop a project's history, delete its
+`php-toolkit.metrics.<hash>` row (or the whole database).
 
 ## Verify
 
@@ -122,7 +139,8 @@ php -l fixtures/php-sample/src/Calculator.php
 ```
 
 > The test suite needs Node >= 22.12 (vitest 5). The published plugin itself
-> runs on Node >= 20.
+> runs on Node >= 20. The tests use fake `php` and `composer` executables, so
+> they do not need PHP or Composer installed.
 
 ## Layout
 
@@ -135,11 +153,12 @@ src/content.ts — markdown loader + skill/command manifests
 src/tools/detect.ts — composer.json intel, no exec
 src/tools/php-tools.ts — php -l, composer validate/audit (read-only, timeouts, AbortSignal); each returns its own outcome + findings
 src/hooks/php-context.ts — system hint, triggers, destructive-pattern guard
-src/metrics/store.ts — per-project metrics document (storage, migration, debounced writes)
+src/metrics/store.ts — per-project metrics document (storage, migration, merged writes)
+src/metrics/registry.ts — one document per project, work attributed to the right one
 src/metrics/format.ts — snapshot rendering
 agents/php-*.md, commands/php-*.md, skills/php-*/SKILL.md
 fixtures/php-sample/ — minimal PSR-4 app for smoke tests
-test/ — vitest suite (metrics store, snapshot format, tool outcomes)
+test/ — vitest suite (metrics store, registry, snapshot format, tool outcomes)
 ```
 
 > Sibling plugins (`opencode-laravel-toolkit`, `opencode-symfony-toolkit`)
