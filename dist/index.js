@@ -1,7 +1,10 @@
+import { basename } from "node:path";
 import { Plugin } from "@opencode/plugin";
 import { COMMAND_DEFS, SKILL_IDS, loadText, parseFrontmatter } from "./content.js";
 import { detectPhpProject, formatDetection } from "./tools/detect.js";
 import { composerAudit, composerValidate, phpLint } from "./tools/php-tools.js";
+import { MetricsRegistry, resolveProjectScope } from "./metrics/registry.js";
+import { formatMetricsSnapshot } from "./metrics/format.js";
 import { PHP_SYSTEM_HINT, PHP_TRIGGER, isDestructiveShell } from "./hooks/php-context.js";
 function skillTitle(id) {
     return id
@@ -13,6 +16,44 @@ export default Plugin.define({
     id: "php-toolkit",
     async setup(ctx) {
         const dir = ctx.location.directory;
+        const project = { name: basename(dir) || dir, path: dir };
+        const metrics = new MetricsRegistry(ctx.storage, project);
+        try {
+            await metrics.initActive();
+        }
+        catch (err) {
+            // Metrics are optional: a storage failure must never take the toolkit down.
+            console.error(`[php-toolkit] metrics unavailable: ${err.message}`);
+        }
+        /**
+         * Wraps a tool so the metric reflects what the tool actually did.
+         *
+         * The tool reports its own outcome instead of relying on the framework
+         * status: the PHP tools return failures as text (a lint that finds a
+         * broken file is a successful lint), so "did it run" and "did it find
+         * problems" have to be reported separately.
+         *
+         * The result is attributed to the directory the tool actually worked in,
+         * so work done for another project does not land in this project's
+         * snapshot.
+         */
+        const tracked = (name, run) => {
+            return async (input, context) => {
+                const requested = input?.directory;
+                const target = typeof requested === "string" && requested ? requested : undefined;
+                const scope = resolveProjectScope(dir, target);
+                const store = metrics.storeFor(scope);
+                try {
+                    const outcome = await run(input, context);
+                    await store.recordTool({ tool: name, status: outcome.status, findings: outcome.findings });
+                    return { content: outcome.text };
+                }
+                catch (err) {
+                    await store.recordTool({ tool: name, status: "error", findings: 0 });
+                    throw err;
+                }
+            };
+        };
         const registrations = [];
         const track = (r) => {
             registrations.push(r);
@@ -69,6 +110,7 @@ export default Plugin.define({
                         name: c.name,
                         description: c.description,
                         execute: async ({ sessionID, prompt, delivery }) => {
+                            await metrics.active.recordCommand({ name: c.name });
                             const args = prompt.text.trim();
                             const text = c.template.includes("$ARGUMENTS")
                                 ? c.template.replaceAll("$ARGUMENTS", args)
@@ -93,11 +135,15 @@ export default Plugin.define({
                     description: "Detect PHP project intel from composer.json/lock: PHP requirement, PSR-4 roots, PHPUnit/Pest/PHPStan/Psalm/CS-Fixer/Rector presence. No shell exec.",
                     input: { type: "object", properties: { directory: { type: "string" } }, additionalProperties: false },
                     options: { namespace: "php" },
-                    execute: async (input) => {
-                        const target = input.directory ?? dir;
-                        const info = await detectPhpProject(target);
-                        return { content: formatDetection(info) };
-                    },
+                    execute: tracked("php_project_detect", async (input) => {
+                        const info = await detectPhpProject(input.directory ?? dir);
+                        return {
+                            text: formatDetection(info),
+                            status: "ok",
+                            // A malformed manifest is a problem in the project.
+                            findings: info.composerJsonError ? 1 : 0,
+                        };
+                    }),
                 });
                 editor.add({
                     name: "lint",
@@ -112,22 +158,51 @@ export default Plugin.define({
                         additionalProperties: false,
                     },
                     options: { namespace: "php" },
-                    execute: async (input, context) => {
-                        const { paths, directory } = input;
-                        const cwd = directory ?? dir;
-                        const lint = await phpLint(paths, cwd, context.signal);
+                    execute: tracked("php_lint", async (input, context) => {
+                        const cwd = input.directory ?? dir;
+                        const lint = await phpLint(input.paths, cwd, context.signal);
                         const validated = await composerValidate(cwd, context.signal);
-                        return { content: `${lint}\n\n${validated}`.slice(0, 24000) };
-                    },
+                        return {
+                            text: `${lint.text}\n\n${validated.text}`.slice(0, 24000),
+                            // The tool only failed outright when neither half could run.
+                            status: lint.status === "error" && validated.status === "error" ? "error" : "ok",
+                            findings: lint.findings + validated.findings,
+                        };
+                    }),
                 });
                 editor.add({
                     name: "composer_audit",
                     description: "Run composer audit --format=json (read-only). Reports known vulnerabilities; never runs update.",
                     input: { type: "object", properties: { directory: { type: "string" } }, additionalProperties: false },
                     options: { namespace: "php" },
-                    execute: async (input, context) => {
+                    execute: tracked("php_composer_audit", async (input, context) => {
                         const cwd = input.directory ?? dir;
-                        return { content: await composerAudit(cwd, context.signal) };
+                        return composerAudit(cwd, context.signal);
+                    }),
+                });
+                editor.add({
+                    name: "metrics",
+                    description: "Show local PHP toolkit usage metrics for this project: tool runs, ok/error outcomes, issues surfaced, command usage, PHP prompt hits. Stored locally; the plugin sends no telemetry.",
+                    input: {
+                        type: "object",
+                        properties: {
+                            allProjects: {
+                                type: "boolean",
+                                description: "Also show the per-project breakdown across this machine.",
+                            },
+                        },
+                        additionalProperties: false,
+                    },
+                    options: { namespace: "php" },
+                    // Deliberately not tracked: reading the snapshot must not change it.
+                    execute: async (input) => {
+                        // Write everything this process is holding before reading, so
+                        // the machine-wide view is not missing our own pending events.
+                        await metrics.flushAll();
+                        const snapshot = metrics.active.getSnapshot();
+                        const all = input?.allProjects;
+                        const scan = all ? await metrics.active.listOtherProjects() : undefined;
+                        return { content: formatMetricsSnapshot(snapshot, scan) };
                     },
                 });
             }));
@@ -137,10 +212,11 @@ export default Plugin.define({
         }
         // ---- Hooks ----
         try {
-            track(await ctx.session.hook("prompt", (event) => {
+            track(await ctx.session.hook("prompt", async (event) => {
                 try {
                     if (PHP_TRIGGER.test(event.prompt.text)) {
                         event.metadata = { ...(event.metadata ?? {}), "php-toolkit": true };
+                        await metrics.active.recordTrigger();
                     }
                 }
                 catch {
@@ -160,7 +236,8 @@ export default Plugin.define({
         catch (err) {
             console.error(`[php-toolkit] hook registration failed: ${err.message}`);
         }
-        return () => {
+        return async () => {
+            await metrics.flushAll();
             for (const r of registrations.splice(0)) {
                 void r.dispose().catch(() => { });
             }

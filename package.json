@@ -19,7 +19,9 @@
     "LICENSE"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "build": "tsc",
     "prepublishOnly": "npm run build"
   },
@@ -27,8 +29,9 @@
     "@opencode/plugin": "^2.0.26"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
-    "@types/node": "^22.0.0"
+    "vitest": "^5.0.5"
   },
   "keywords": [
     "opencode",

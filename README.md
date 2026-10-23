@@ -64,19 +64,83 @@ opencode plugin add file:///home/leonidas/dev/nexusnv/opencode-php-toolkit
 - Agents (`agents/php-*.md`, `mode: subagent`): `php-reviewer`, `php-debugger`, `php-modernizer`, `php-tester`. Copied to `~/.config/opencode/agents/` on install as convenience (v2 `AgentEditor` has no `add`; transforms can't create agents — files are the source of truth).
 - Skills (8, autoinvoke): `php-standards`, `php-static-analysis`, `php-testing`, `php-security`, `php-modernize`, `php-composer`, `php-architecture`, `php-debug`.
 - Commands (7): `/php-review`, `/php-analyze`, `/php-fix-style`, `/php-test`, `/php-audit`, `/php-upgrade`, `/php-scaffold`.
-- Tools (`php_*` namespace, read-only): `php_project_detect`, `php_lint`, `php_composer_audit`.
+- Tools (`php_*` namespace, read-only): `php_project_detect`, `php_lint`, `php_composer_audit`, `php_metrics`.
 - Hooks: `prompt` tags PHP context, `context` adds typed-PHP system hint, `tool.execute.before` warns on destructive `composer update` / `rector process` without `--dry-run` / `php-cs-fixer fix` without `--dry-run`.
+
+## Local metrics
+
+`php_metrics` shows what the toolkit actually did in the project you are
+working in:
+
+```
+PHP toolkit metrics (local-only, never leaves this machine)
+  Project: my-app
+  Tracking since: 2026-10-21 09:00Z
+  PHP-mentioning prompts: 12
+
+  Tools
+    php_lint             3 runs    3 ok / 0 error   2 findings   last 2026-10-21 09:12Z
+    php_project_detect   5 runs    5 ok / 0 error   0 findings   last 2026-10-21 09:14Z
+
+  Commands
+    php-review           2 invocations   last 2026-10-21 09:15Z
+
+  Impact: 2 issues surfaced by the toolkit in this project.
+```
+
+- **Runs / ok / error** — how often a tool ran, and whether it completed the
+  work it was asked to do. A tool that could not complete it (missing `php`,
+  a timeout, a file it could not read) is an *error*.
+- **Findings** — issues the toolkit surfaced in your code: parse errors found
+  by `php_lint`, advisories reported by `php_composer_audit`, a malformed or
+  invalid `composer.json`. A lint that finds a broken file is a *successful*
+  lint with a finding, not an error.
+- **Per project.** Each project root gets its own document, so the snapshot
+  describes the codebase you are in. A tool pointed at a directory outside the
+  active project is counted against that directory instead, so one project's
+  numbers never absorb another's. Pass `allProjects: true` to `php_metrics`
+  for the machine-wide breakdown. That view is eventually consistent: a
+  session running elsewhere may still have unsaved events.
+
+### Privacy
+
+Metrics themselves never leave your machine:
+
+- Metrics are written to OpenCode's local storage only
+  (`~/.local/share/opencode/opencode.db`, key `php-toolkit.metrics.<hash>`).
+- The plugin makes no outbound requests of its own.
+- Only counts, timestamps and the project path are recorded — never file
+  contents, file names, code or prompt text.
+
+Two things worth knowing precisely:
+
+- **`php_composer_audit` does reach the network.** It runs `composer audit`,
+  which contacts the Composer advisory service to look up known
+  vulnerabilities. That request is made by Composer, on your behalf, when you
+  ask for the audit — the plugin does not transmit anything itself.
+- **The snapshot is tool output.** `php_metrics` returns the snapshot as tool
+  content, so with a remote model provider it is included in that request.
+  The snapshot therefore contains no absolute paths, no file names and no
+  code — only counts, timings and the project folder name.
+
+Removing the plugin does not delete the metrics: the rows stay in OpenCode's
+local database. To drop a project's history, delete its
+`php-toolkit.metrics.<hash>` row (or the whole database).
 
 ## Verify
 
 ```sh
 npm install
 npm run typecheck
+npm test
 npm run build
 node -e "import('./dist/index.js').then(m=>console.log(m.default.id))"
-php -l src/index.ts 2>/dev/null || true
 php -l fixtures/php-sample/src/Calculator.php
 ```
+
+> The test suite needs Node >= 22.12 (vitest 5). The published plugin itself
+> runs on Node >= 20. The tests use fake `php` and `composer` executables, so
+> they do not need PHP or Composer installed.
 
 ## Layout
 
@@ -87,10 +151,14 @@ index.js — package entrypoint shim (required: OpenCode loads a plugin
 src/index.ts — Plugin.define entry
 src/content.ts — markdown loader + skill/command manifests
 src/tools/detect.ts — composer.json intel, no exec
-src/tools/php-tools.ts — php -l, composer validate/audit (read-only, timeouts, AbortSignal)
+src/tools/php-tools.ts — php -l, composer validate/audit (read-only, timeouts, AbortSignal); each returns its own outcome + findings
 src/hooks/php-context.ts — system hint, triggers, destructive-pattern guard
+src/metrics/store.ts — per-project metrics document (storage, migration, merged writes)
+src/metrics/registry.ts — one document per project, work attributed to the right one
+src/metrics/format.ts — snapshot rendering
 agents/php-*.md, commands/php-*.md, skills/php-*/SKILL.md
 fixtures/php-sample/ — minimal PSR-4 app for smoke tests
+test/ — vitest suite (metrics store, registry, snapshot format, tool outcomes)
 ```
 
 > Sibling plugins (`opencode-laravel-toolkit`, `opencode-symfony-toolkit`)

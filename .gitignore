@@ -2,6 +2,7 @@ node_modules/
 *.log
 .DS_Store
 .opencode/
+.codegraph/
 # NOTE: dist/ is intentionally tracked — OpenCode installs this plugin
 # straight from git, and the root index.js shim re-exports
 # ./dist/index.js. Always run `npm run build` before committing.
