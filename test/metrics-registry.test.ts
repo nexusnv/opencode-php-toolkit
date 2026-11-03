@@ -1,3 +1,6 @@
+import { mkdtempSync, realpathSync, symlinkSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { MetricsRegistry, resolveProjectScope } from "../src/metrics/registry.js";
 import { storageKeyFor, type MetricsStorage } from "../src/metrics/store.js";
@@ -35,6 +38,19 @@ describe("resolveProjectScope", () => {
   it("attributes work outside the active project to that directory", () => {
     expect(resolveProjectScope(ACTIVE.path, "/home/dev/other-app")).toBe("/home/dev/other-app");
     expect(resolveProjectScope(ACTIVE.path, "../other-app")).toBe("/home/dev/other-app");
+  });
+
+  it("attributes work done through an inside-project symlink to the real location", () => {
+    const root = mkdtempSync(join(tmpdir(), "php-toolkit-scope-"));
+    const outside = mkdtempSync(join(tmpdir(), "php-toolkit-outside-"));
+    const link = join(root, "outside-link");
+    symlinkSync(outside, link);
+    try {
+      expect(resolveProjectScope(root, link)).toBe(realpathSync(outside));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 });
 

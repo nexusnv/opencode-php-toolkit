@@ -70,7 +70,7 @@ opencode plugin add file:///home/leonidas/dev/nexusnv/opencode-php-toolkit
 - Skills (8, autoinvoke): `php-standards`, `php-static-analysis`, `php-testing`, `php-security`, `php-modernize`, `php-composer`, `php-architecture`, `php-debug`.
 - Commands (7): `/php-review`, `/php-analyze`, `/php-fix-style`, `/php-test`, `/php-audit`, `/php-upgrade`, `/php-scaffold`.
 - Tools (`php_*` namespace, read-only): `php_project_detect`, `php_lint`, `php_composer_audit`, `php_metrics`.
-- Hooks: `prompt` tags PHP context, `context` adds typed-PHP system hint, `tool.execute.before` warns on destructive `composer update` / `rector process` without `--dry-run` / `php-cs-fixer fix` without `--dry-run`.
+- Hooks: `prompt` tags PHP context, `context` adds typed-PHP system hint (only when the project has a `composer.json` or the request's user messages mention PHP — no tokens spent on unrelated sessions), `tool.execute.before` warns on destructive `composer update` / `rector process` without `--dry-run` / `php-cs-fixer fix` without `--dry-run`.
 
 ## Local metrics
 

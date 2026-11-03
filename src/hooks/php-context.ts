@@ -7,6 +7,32 @@ export const PHP_SYSTEM_HINT =
 
 export const PHP_TRIGGER = /(php|composer|phpunit|pest|phpstan|psalm|rector|cs-fixer|phpcs|mago|xdebug)/i;
 
+/**
+ * Minimal, structural view of a chat message - the v2 SessionContext's
+ * `messages` is assignable to this, without this module importing the AI
+ * schema. Text parts longer than this are not fully scanned.
+ */
+const MAX_TEXT_SCAN = 8000;
+type MessageLike = { role?: unknown; content?: unknown };
+
+/** True when a user message in this request mentions the PHP ecosystem. */
+export function mentionsPhp(messages: ReadonlyArray<MessageLike> | undefined): boolean {
+  if (!Array.isArray(messages)) return false;
+  for (const message of messages) {
+    if (!message || typeof message !== "object") continue;
+    if (message.role !== "user") continue;
+    if (!Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (!part || typeof part !== "object") continue;
+      const text = (part as { text?: unknown }).text;
+      if ((part as { type?: unknown }).type === "text" && typeof text === "string") {
+        if (PHP_TRIGGER.test(text.slice(0, MAX_TEXT_SCAN))) return true;
+      }
+    }
+  }
+  return false;
+}
+
 const DESTRUCTIVE = [
   /composer\s+update\b/,
   /rector\s+process\b(?![\s\S]*--dry-run)/,

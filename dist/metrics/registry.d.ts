@@ -7,6 +7,13 @@ import { MetricsStore, type MetricsProject, type MetricsStorage } from "./store.
  * belongs to the directory it was actually run against, so one project's
  * snapshot never absorbs another project's numbers.
  */
+/**
+ * Work inside the active project root resolves against that root. Paths
+ * outside it (or symlinks pointing out of it) are attributed to their
+ * canonical location, so the same directory is never tracked under two
+ * spellings and a symlink out of the project cannot absorb another
+ * project's numbers. Paths that do not exist yet compare textually.
+ */
 export declare function resolveProjectScope(activeRoot: string, target?: string): string;
 /**
  * Keeps one metrics document per project, so work is attributed to the

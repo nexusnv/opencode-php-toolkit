@@ -1,3 +1,4 @@
+import { access } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { Plugin } from "@opencode/plugin";
 import { COMMAND_DEFS, SKILL_IDS, PKG_ROOT, loadText, parseFrontmatter } from "./content.js";
@@ -5,7 +6,16 @@ import { detectPhpProject, formatDetection } from "./tools/detect.js";
 import { composerAudit, composerValidate, phpLint } from "./tools/php-tools.js";
 import { MetricsRegistry, resolveProjectScope } from "./metrics/registry.js";
 import { formatMetricsSnapshot } from "./metrics/format.js";
-import { PHP_SYSTEM_HINT, PHP_TRIGGER, isDestructiveShell } from "./hooks/php-context.js";
+import { PHP_SYSTEM_HINT, PHP_TRIGGER, isDestructiveShell, mentionsPhp } from "./hooks/php-context.js";
+async function pathExists(path) {
+    try {
+        await access(path);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
 function skillTitle(id) {
     return id
         .split("-")
@@ -17,6 +27,9 @@ export default Plugin.define({
     async setup(ctx) {
         const dir = ctx.location.directory;
         const project = { name: basename(dir) || dir, path: dir };
+        // The PHP hint is only worth its tokens when PHP work is actually on the
+        // table: in the project itself, or in this request's messages.
+        const projectIsPhp = await pathExists(join(dir, "composer.json"));
         const metrics = new MetricsRegistry(ctx.storage, project);
         try {
             await metrics.initActive();
@@ -224,7 +237,9 @@ export default Plugin.define({
                 }
             }));
             track(await ctx.session.hook("context", (event) => {
-                event.system.push({ type: "text", text: PHP_SYSTEM_HINT });
+                if (projectIsPhp || mentionsPhp(event.messages)) {
+                    event.system.push({ type: "text", text: PHP_SYSTEM_HINT });
+                }
             }));
             track(await ctx.tool.hook("execute.before", (event) => {
                 const hit = isDestructiveShell(event.input);

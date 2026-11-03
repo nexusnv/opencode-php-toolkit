@@ -1,6 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { PKG_ROOT } from "../content.js";
 
 export interface PhpProjectInfo {
   hasComposerJson: boolean;
@@ -8,7 +7,6 @@ export interface PhpProjectInfo {
   /** Set when composer.json exists but could not be read or parsed. */
   composerJsonError: string | null;
   phpRequirement: string | null;
-  phpVersion: string | null;
   autoloadPsr4: Record<string, string>;
   require: Record<string, string>;
   requireDev: Record<string, string>;
@@ -39,7 +37,6 @@ export async function detectPhpProject(directory: string): Promise<PhpProjectInf
     hasComposerLock: false,
     composerJsonError: null,
     phpRequirement: null,
-    phpVersion: null,
     autoloadPsr4: {},
     require: {},
     requireDev: {},
@@ -106,13 +103,12 @@ export async function detectPhpProject(directory: string): Promise<PhpProjectInf
     // no composer.json — stay framework-agnostic, report empty
   }
   try {
-    const { readFile: rf } = await import("node:fs/promises");
-    await rf(join(directory, "composer.lock"), "utf8");
+    // Existence is all we need - readFile would copy the whole lock into memory.
+    await access(join(directory, "composer.lock"));
     empty.hasComposerLock = true;
   } catch {
     // no lock
   }
-  void PKG_ROOT;
   return empty;
 }
 

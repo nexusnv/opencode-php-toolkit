@@ -4,6 +4,35 @@ export const PHP_SYSTEM_HINT = "Prefer typed, framework-agnostic PHP 8.1+. " +
     "Rector and CS-Fixer: dry-run first, show diff, apply only on approval. " +
     "Composer: validate before audit/outdated; never commit without lock check.";
 export const PHP_TRIGGER = /(php|composer|phpunit|pest|phpstan|psalm|rector|cs-fixer|phpcs|mago|xdebug)/i;
+/**
+ * Minimal, structural view of a chat message - the v2 SessionContext's
+ * `messages` is assignable to this, without this module importing the AI
+ * schema. Text parts longer than this are not fully scanned.
+ */
+const MAX_TEXT_SCAN = 8000;
+/** True when a user message in this request mentions the PHP ecosystem. */
+export function mentionsPhp(messages) {
+    if (!Array.isArray(messages))
+        return false;
+    for (const message of messages) {
+        if (!message || typeof message !== "object")
+            continue;
+        if (message.role !== "user")
+            continue;
+        if (!Array.isArray(message.content))
+            continue;
+        for (const part of message.content) {
+            if (!part || typeof part !== "object")
+                continue;
+            const text = part.text;
+            if (part.type === "text" && typeof text === "string") {
+                if (PHP_TRIGGER.test(text.slice(0, MAX_TEXT_SCAN)))
+                    return true;
+            }
+        }
+    }
+    return false;
+}
 const DESTRUCTIVE = [
     /composer\s+update\b/,
     /rector\s+process\b(?![\s\S]*--dry-run)/,

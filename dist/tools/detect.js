@@ -1,6 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { PKG_ROOT } from "../content.js";
 function has(deps, needle) {
     return Object.keys(deps).some((k) => k === needle || k.endsWith("/" + needle));
 }
@@ -10,7 +9,6 @@ export async function detectPhpProject(directory) {
         hasComposerLock: false,
         composerJsonError: null,
         phpRequirement: null,
-        phpVersion: null,
         autoloadPsr4: {},
         require: {},
         requireDev: {},
@@ -74,14 +72,13 @@ export async function detectPhpProject(directory) {
         // no composer.json — stay framework-agnostic, report empty
     }
     try {
-        const { readFile: rf } = await import("node:fs/promises");
-        await rf(join(directory, "composer.lock"), "utf8");
+        // Existence is all we need - readFile would copy the whole lock into memory.
+        await access(join(directory, "composer.lock"));
         empty.hasComposerLock = true;
     }
     catch {
         // no lock
     }
-    void PKG_ROOT;
     return empty;
 }
 export function formatDetection(info) {
