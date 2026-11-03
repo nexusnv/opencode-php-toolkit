@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { composerValidate, countAdvisories, parseAuditReport, phpLint } from "../src/tools/php-tools.js";
+import { composerAudit, composerValidate, countAdvisories, parseAuditReport, phpLint } from "../src/tools/php-tools.js";
 
 /**
  * The tool tests drive fake `php` and `composer` executables so the suite
@@ -15,6 +15,10 @@ import { composerValidate, countAdvisories, parseAuditReport, phpLint } from "..
  *   killed.php   -> dies on a signal          (operational failure)
  *
  * The fake composer reads ./composer.json and dispatches on markers in it.
+ *   FAKE_INVALID       -> validate fails
+ *   FAKE_AUDIT_ERROR   -> audit prints a fragment and fails
+ *   FAKE_ADVISORIES    -> audit reports CVEs
+ *   FAKE_AUDIT_NO_LOCK -> audit prints prose instead of JSON (exit 0)
  */
 const FAKE_PHP = `#!/bin/sh
 case "$2" in
@@ -40,6 +44,9 @@ case "$1" in
   audit)
     if grep -q FAKE_AUDIT_ERROR "$manifest" 2>/dev/null; then
       echo "{"; exit 1
+    fi
+    if grep -q FAKE_AUDIT_NO_LOCK "$manifest" 2>/dev/null; then
+      echo "No packages - skipping audit."; exit 0
     fi
     if grep -q FAKE_ADVISORIES "$manifest" 2>/dev/null; then
       printf '{"advisories":{"pkg/a":[{"advisoryId":"CVE-1"}],"pkg/b":[{"advisoryId":"CVE-2"},{"advisoryId":"CVE-3"}]}}'
@@ -113,6 +120,9 @@ describe("phpLint", () => {
     expect(outcome.status).toBe("error");
     expect(outcome.findings).toBe(0);
     expect(outcome.text).toContain("COULD NOT LINT");
+    // The child's actual stderr is surfaced, not the exec wrapper message.
+    expect(outcome.text).toContain("Could not open input file");
+    expect(outcome.text).not.toContain("Command failed");
   });
 
   it("reports a partial run as an error while keeping the findings it made", async () => {
@@ -140,6 +150,21 @@ describe("phpLint", () => {
     const outcome = await phpLint(undefined as unknown as string[], "/tmp");
     expect(outcome.status).toBe("error");
     expect(outcome.findings).toBe(0);
+  });
+
+  it("says so when more than 20 paths are given", async () => {
+    const files: Record<string, string> = {};
+    const paths: string[] = [];
+    for (let i = 0; i < 21; i++) {
+      const name = `bulk-${String(i).padStart(2, "0")}.php`;
+      files[name] = VALID_PHP;
+      paths.push(name);
+    }
+    const dir = workspace(files);
+    const outcome = await phpLint(paths, dir);
+    expect(outcome.status).toBe("ok");
+    expect(outcome.text).toContain("first 20 of 21");
+    expect(outcome.text).not.toContain("bulk-20.php");
   });
 });
 
@@ -192,5 +217,22 @@ describe("audit report parsing", () => {
   it("survives a report with noise around the json", () => {
     const noisy = `Warning: something\n{"advisories":{"pkg":[{"advisoryId":"CVE-9"}]}}\n`;
     expect(countAdvisories(noisy)).toBe(1);
+  });
+});
+
+describe("composerAudit", () => {
+  it("treats 'No packages' prose output as a clean audit, not a failure", async () => {
+    const dir = workspace({ "composer.json": "FAKE_AUDIT_NO_LOCK {\"name\":\"acme/demo\"}" });
+    const outcome = await composerAudit(dir);
+    expect(outcome.status).toBe("ok");
+    expect(outcome.findings).toBe(0);
+    expect(outcome.text).toContain("nothing to audit");
+  });
+
+  it("keeps failing closed on real audit output errors", async () => {
+    const dir = workspace({ "composer.json": "FAKE_AUDIT_ERROR not-json" });
+    const outcome = await composerAudit(dir);
+    expect(outcome.status).toBe("error");
+    expect(outcome.findings).toBe(0);
   });
 });

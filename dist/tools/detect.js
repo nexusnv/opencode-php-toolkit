@@ -63,7 +63,7 @@ export async function detectPhpProject(directory) {
             csFixer: has(all, "php-cs-fixer"),
             phpcs: has(all, "phpcs") || has(all, "php_codesniffer"),
             rector: has(all, "rector"),
-            mago: false,
+            mago: has(all, "mago"),
             deptrac: has(all, "deptrac"),
             infection: has(all, "infection"),
         };

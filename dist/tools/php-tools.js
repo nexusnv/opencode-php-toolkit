@@ -10,7 +10,12 @@ function run(cmd, args, cwd, timeoutMs, signal) {
             resolve({
                 ok: !err,
                 stdout: String(stdout ?? ""),
-                stderr: String(err?.message ?? stderr ?? ""),
+                // Prefer the process's real stderr. Fall back to err.message only
+                // when the child said nothing (e.g. spawn failures) so tool output is
+                // not polluted with the generic "Command failed: ..." wrapper.
+                stderr: typeof stderr === "string" && stderr.length > 0
+                    ? String(stderr)
+                    : String(err?.message ?? ""),
                 code: err?.code ?? null,
                 // `killed` is set when we killed the child (timeout/abort); a child
                 // that died on its own reports a signal instead.
@@ -103,6 +108,10 @@ export async function phpLint(paths, cwd, signal) {
             findings += 1;
         out.push(`${p}: ${r.ok ? "OK" : "FAIL"}\n${r.stdout}${r.stderr}`.trim());
     }
+    if (files.length > 20) {
+        // The cap is deliberate (output budget), but it must be visible.
+        out.push(`php_lint: note: linted only the first 20 of ${files.length} paths; pass the remaining ${files.length - 20} in a separate call.`);
+    }
     const text = out.join("\n\n").slice(0, 20000) || "php_lint: empty result.";
     if (!linted || unreadable > 0) {
         // The tool did not complete everything it was asked to do.
@@ -153,18 +162,26 @@ export async function composerAudit(cwd, signal) {
             findings: 0,
         };
     }
+    const combined = `${r.stdout}\n${r.stderr}`.trim();
     // The report is counted before the text is truncated: a report larger than
     // the display limit still has to produce the right number of findings.
     const report = parseAuditReport(r.stdout);
     if (!report) {
-        const combined = `${r.stdout}\n${r.stderr}`.trim();
+        // `composer audit` without a lock file exits 0 and prints this prose
+        // instead of JSON - there is simply nothing to report.
+        if (r.ok && /no packages/i.test(combined)) {
+            return {
+                text: `composer audit: nothing to audit.\n${combined}\nHint: run \`composer install\` first if you expected a dependency report.`,
+                status: "ok",
+                findings: 0,
+            };
+        }
         return {
             text: `composer audit could not run:\n${combined.slice(0, 4000)}\nHint: needs composer.json + network. Run \`composer validate\` first.`,
             status: "error",
             findings: 0,
         };
     }
-    const combined = `${r.stdout}\n${r.stderr}`.trim();
     return {
         text: `composer audit result:\n${combined.slice(0, 20000)}`,
         status: "ok",
