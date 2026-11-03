@@ -20,6 +20,10 @@ export interface PhpProjectInfo {
         deptrac: boolean;
         infection: boolean;
     };
+    /** Static-analysis/style-fixer config files present in the project root (just the file names). */
+    configs: string[];
+    /** composer.json `config.platform.php`, when pinned. */
+    platformPhp: string | null;
     laravelHint: boolean;
     symfonyHint: boolean;
 }

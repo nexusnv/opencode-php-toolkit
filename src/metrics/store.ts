@@ -517,6 +517,33 @@ export class MetricsStore {
     }
   }
 
+  /**
+   * Deletes this project's persisted document and starts over with an empty
+   * one. Pending increments are discarded too - this is a full wipe, used by
+   * `php_metrics` when the user explicitly asks for it.
+   */
+  async reset(): Promise<boolean> {
+    try {
+      await this.storage.remove(this.key);
+    } catch {
+      return false;
+    }
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    this.base = initialMetrics(this.project);
+    this.delta = emptyDelta();
+    this.wrote = false;
+    this.retries = 0;
+    this.writable = true;
+    return true;
+  }
+
   private markDirty(): void {
     if (this.timer) return;
     this.timer = setTimeout(() => {

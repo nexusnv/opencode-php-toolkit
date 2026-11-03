@@ -1,4 +1,23 @@
 import { execFile } from "node:child_process";
+import { access } from "node:fs/promises";
+import { join } from "node:path";
+async function pathExists(path) {
+    try {
+        await access(path);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+function decodeXmlEntities(text) {
+    return text
+        .replaceAll("&quot;", '"')
+        .replaceAll("&apos;", "'")
+        .replaceAll("&gt;", ">")
+        .replaceAll("&lt;", "<")
+        .replaceAll("&amp;", "&");
+}
 /** `php -l` exits 255 when the file does not parse. */
 const PHP_PARSE_ERROR_EXIT = 255;
 /** `composer validate` exits 1 for a bad manifest, 3 when there is none. */
@@ -186,6 +205,309 @@ export async function composerAudit(cwd, signal) {
         text: `composer audit result:\n${combined.slice(0, 20000)}`,
         status: "ok",
         findings: report.advisories,
+    };
+}
+// ---- Static analysis (vendor binaries, JSON output) ----
+function jsonSlice(raw, open, close) {
+    const start = raw.indexOf(open);
+    const end = raw.lastIndexOf(close);
+    return start === -1 || end <= start ? null : raw.slice(start, end + 1);
+}
+/** Parses the `--error-format=json` output of phpstan (totals + files). */
+export function parsePhpStanReport(stdout) {
+    const slice = jsonSlice(stdout, "{", "}");
+    if (!slice)
+        return null;
+    let parsed;
+    try {
+        parsed = JSON.parse(slice);
+    }
+    catch {
+        return null;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+        return null;
+    const doc = parsed;
+    const lines = [];
+    if (doc.files && typeof doc.files === "object") {
+        for (const [file, value] of Object.entries(doc.files)) {
+            const messages = value?.messages;
+            if (!Array.isArray(messages))
+                continue;
+            for (const raw of messages) {
+                const m = raw;
+                const line = typeof m?.line === "number" ? `:${m.line}` : "";
+                const msg = typeof m?.message === "string" ? m.message : "";
+                if (msg)
+                    lines.push(`${file}${line} ${msg}`);
+                if (lines.length >= 20)
+                    break;
+            }
+            if (lines.length >= 20)
+                break;
+        }
+    }
+    // totals.errors is the authoritative count; when it is absent, count what we listed.
+    const findings = typeof doc.totals?.errors === "number" && Number.isFinite(doc.totals.errors)
+        ? doc.totals.errors
+        : lines.length;
+    return { findings, lines };
+}
+/** Parses the `--output-format=json` output of psalm (array of issues). */
+export function parsePsalmReport(stdout) {
+    const slice = jsonSlice(stdout, "[", "]");
+    if (!slice)
+        return null;
+    let parsed;
+    try {
+        parsed = JSON.parse(slice);
+    }
+    catch {
+        return null;
+    }
+    const issues = Array.isArray(parsed)
+        ? parsed
+        : parsed && typeof parsed === "object" && Array.isArray(parsed.issues)
+            ? parsed.issues
+            : null;
+    if (!issues)
+        return null;
+    const lines = [];
+    for (const raw of issues.slice(0, 20)) {
+        const o = raw;
+        const file = typeof o?.file_name === "string" ? o.file_name : typeof o?.fileName === "string" ? o.fileName : "unknown";
+        const rawLine = typeof o?.line_from === "number" ? o.line_from : typeof o?.line === "number" ? o.line : null;
+        const line = rawLine !== null ? `:${rawLine}` : "";
+        const msg = typeof o?.message === "string" ? o.message : "";
+        lines.push(`${file}${line} ${msg}`.trim());
+    }
+    return { findings: issues.length, lines };
+}
+export async function phpStaticAnalysis(cwd, signal, selection = "auto") {
+    const phpstanBin = join(cwd, "vendor/bin/phpstan");
+    const psalmBin = join(cwd, "vendor/bin/psalm");
+    const [hasPhpstan, hasPsalm] = await Promise.all([pathExists(phpstanBin), pathExists(psalmBin)]);
+    let kind = hasPhpstan ? "phpstan" : hasPsalm ? "psalm" : null;
+    if (selection === "phpstan")
+        kind = hasPhpstan ? "phpstan" : null;
+    if (selection === "psalm")
+        kind = hasPsalm ? "psalm" : null;
+    if (!kind) {
+        const want = selection === "auto" ? "phpstan/phpstan or vimeo/psalm" : selection === "phpstan" ? "phpstan/phpstan" : "vimeo/psalm";
+        return {
+            text: `php_static_analysis: no analyzer found. Install ${want} as a dev dependency, run \`composer install\`, then retry.`,
+            status: "error",
+            findings: 0,
+        };
+    }
+    if (kind === "phpstan") {
+        const r = await run(phpstanBin, ["analyse", "--no-progress", "--error-format=json"], cwd, 300000, signal);
+        if (r.killed)
+            return { text: "phpstan timed out or was aborted.", status: "error", findings: 0 };
+        const report = parsePhpStanReport(r.stdout);
+        if (!report) {
+            // phpstan exits 0 when clean (it emits no JSON then), 1 when it finds
+            // errors. Prose output on a failing exit means the analyzer broke.
+            if (r.ok)
+                return { text: `phpstan: no errors reported.\n${r.stdout.slice(0, 2000)}`, status: "ok", findings: 0 };
+            return {
+                text: `phpstan could not run:\n${`${r.stdout}\n${r.stderr}`.trim().slice(0, 4000)}`,
+                status: "error",
+                findings: 0,
+            };
+        }
+        const listed = report.lines.join("\n");
+        const more = report.findings > report.lines.length ? `\n... and ${report.findings - report.lines.length} more` : "";
+        return {
+            text: `phpstan: ${report.findings} error(s)\n${listed}${more}`.slice(0, 16000),
+            status: "ok",
+            findings: report.findings,
+        };
+    }
+    const r = await run(psalmBin, ["--no-cache", "--no-progress", "--output-format=json"], cwd, 300000, signal);
+    if (r.killed)
+        return { text: "psalm timed out or was aborted.", status: "error", findings: 0 };
+    const report = parsePsalmReport(r.stdout);
+    if (!report) {
+        if (r.ok)
+            return { text: `psalm: no issues reported.\n${r.stdout.slice(0, 2000)}`, status: "ok", findings: 0 };
+        return {
+            text: `psalm could not run:\n${`${r.stdout}\n${r.stderr}`.trim().slice(0, 4000)}`,
+            status: "error",
+            findings: 0,
+        };
+    }
+    const listed = report.lines.join("\n");
+    const more = report.findings > report.lines.length ? `\n... and ${report.findings - report.lines.length} more` : "";
+    return {
+        text: `psalm: ${report.findings} issue(s)\n${listed}${more}`.slice(0, 16000),
+        status: "ok",
+        findings: report.findings,
+    };
+}
+/**
+ * Parses `<testsuites>` from `--log-junit php://stdout`. The outermost
+ * testsuite carries the aggregate counts; attribute order differs between
+ * PHPUnit/Pest versions, so attributes are read individually.
+ */
+export function parseJUnitReport(stdout) {
+    const suite = stdout.match(/<testsuite\b[^>]*>/);
+    if (!suite)
+        return null;
+    const tag = suite[0];
+    const attr = (name) => {
+        const m = tag.match(new RegExp(`${name}="(\\d+)"`));
+        return m ? Number(m[1]) : 0;
+    };
+    const failing = [];
+    for (const block of stdout.matchAll(/<testcase\b[\s\S]*?<\/testcase>/g)) {
+        const body = block[0];
+        const msg = body.match(/<(failure|error)\b[^>]*message="([^"]*)"/);
+        if (!msg)
+            continue;
+        const file = body.match(/\bfile="([^"]*)"/);
+        const line = body.match(/\bline="(\d+)"/);
+        const where = file ? `${file[1]}${line ? `:${line[1]}` : ""}` : "testcase";
+        failing.push(`${where} ${decodeXmlEntities(msg[2]).split("\n")[0]}`);
+        if (failing.length >= 20)
+            break;
+    }
+    return {
+        tests: attr("tests"),
+        assertions: attr("assertions"),
+        failures: attr("failures"),
+        errors: attr("errors"),
+        skipped: attr("skipped"),
+        failing,
+    };
+}
+/**
+ * Runs the project's test suite via `vendor/bin/pest` or `vendor/bin/phpunit`.
+ * The vendor binary is the only allowed entry point (never a bare PATH
+ * binary), the working directory is explicit, and the run is time-boxed and
+ * abortable. Failing tests are findings, not a tool error.
+ */
+export async function phpTest(cwd, signal, filter) {
+    const pestBin = join(cwd, "vendor/bin/pest");
+    const phpunitBin = join(cwd, "vendor/bin/phpunit");
+    const [hasPest, hasPhpunit] = await Promise.all([pathExists(pestBin), pathExists(phpunitBin)]);
+    const kind = hasPest ? "pest" : hasPhpunit ? "phpunit" : null;
+    const binary = hasPest ? pestBin : hasPhpunit ? phpunitBin : null;
+    if (!binary || !kind) {
+        return {
+            text: "php_test: no vendor/bin/pest or vendor/bin/phpunit found. Install the dev dependencies (composer require --dev pestphp/pest or phpunit/phpunit) and retry. Tests are never run from a bare PATH binary.",
+            status: "error",
+            findings: 0,
+        };
+    }
+    const args = ["--log-junit", "php://stdout"];
+    if (filter)
+        args.push("--filter", filter);
+    const r = await run(binary, args, cwd, 300000, signal);
+    if (isMissingBinary(r) || (!r.ok && r.code === null)) {
+        return {
+            text: `php_test: could not execute the ${kind} binary.\n${r.stderr}`.trim(),
+            status: "error",
+            findings: 0,
+        };
+    }
+    if (r.killed) {
+        return { text: "php_test: the test run timed out or was aborted.", status: "error", findings: 0 };
+    }
+    const summary = parseJUnitReport(r.stdout);
+    if (!summary) {
+        // exit 2/config errors produce prose, not JUnit - that is an operational failure.
+        if (!r.ok) {
+            return {
+                text: `php_test: the runner failed.\n${`${r.stdout}\n${r.stderr}`.trim().slice(0, 4000)}`,
+                status: "error",
+                findings: 0,
+            };
+        }
+        return {
+            text: `${kind}: tests passed (no failures), but the JUnit report could not be parsed.`,
+            status: "ok",
+            findings: 0,
+        };
+    }
+    const skipped = summary.skipped > 0 ? `, ${summary.skipped} skipped` : "";
+    const failing = summary.failing.length ? `\n${summary.failing.join("\n")}` : "";
+    return {
+        text: `${kind}: ${summary.tests} test(s), ${summary.assertions} assertions, ${summary.failures} failures, ${summary.errors} errors${skipped}${failing}`.slice(0, 16000),
+        status: "ok",
+        findings: summary.failures + summary.errors,
+    };
+}
+/** Parses `composer outdated --direct --format=json`. */
+export function parseOutdated(stdout) {
+    const slice = jsonSlice(stdout, "{", "}");
+    if (!slice)
+        return null;
+    let parsed;
+    try {
+        parsed = JSON.parse(slice);
+    }
+    catch {
+        return null;
+    }
+    if (!parsed || typeof parsed !== "object")
+        return null;
+    const doc = parsed;
+    const list = Array.isArray(doc.installed) ? doc.installed : Array.isArray(doc.latest) ? doc.latest : null;
+    if (!list)
+        return null;
+    const out = [];
+    for (const raw of list) {
+        if (!raw || typeof raw !== "object")
+            continue;
+        const e = raw;
+        const status = typeof e["latest-status"] === "string" ? e["latest-status"] : "";
+        // An entry without status info but with divergent versions is still updateable.
+        const updateable = status.length > 0 ? status !== "up-to-date" : String(e.version ?? "") !== String(e.latest ?? "");
+        if (!updateable)
+            continue;
+        out.push({
+            name: String(e.name ?? "?"),
+            from: String(e.version ?? "?"),
+            to: String(e.latest ?? "?"),
+            status,
+        });
+    }
+    return out;
+}
+export async function composerOutdated(cwd, signal) {
+    const r = await run("composer", ["outdated", "--direct", "--format=json"], cwd, 120000, signal);
+    if (isMissingBinary(r)) {
+        return {
+            text: `composer outdated could not run:\n${r.stderr.slice(0, 2000) || "composer not found on PATH."}`,
+            status: "error",
+            findings: 0,
+        };
+    }
+    if (r.killed) {
+        return { text: "composer outdated timed out or was aborted.", status: "error", findings: 0 };
+    }
+    const report = parseOutdated(r.stdout);
+    if (!report) {
+        return {
+            text: `composer outdated could not run:\n${`${r.stdout}\n${r.stderr}`.trim().slice(0, 4000)}\nHint: needs composer.json + network. Run \`composer validate\` first.`,
+            status: "error",
+            findings: 0,
+        };
+    }
+    if (report.length === 0) {
+        return {
+            text: "composer outdated --direct: all direct dependencies are up to date.",
+            status: "ok",
+            findings: 0,
+        };
+    }
+    const lines = report.slice(0, 20).map((e) => `${e.name}: ${e.from} -> ${e.to}${e.status ? ` (${e.status})` : ""}`);
+    const more = report.length > lines.length ? `\n... and ${report.length - lines.length} more` : "";
+    return {
+        text: `composer outdated --direct: ${report.length} direct dependency(ies) have a newer version:\n${lines.join("\n")}${more}`.slice(0, 16000),
+        status: "ok",
+        findings: report.length,
     };
 }
 //# sourceMappingURL=php-tools.js.map

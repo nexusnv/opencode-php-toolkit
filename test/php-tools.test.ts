@@ -1,8 +1,21 @@
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { composerAudit, composerValidate, countAdvisories, parseAuditReport, phpLint } from "../src/tools/php-tools.js";
+import {
+  composerAudit,
+  composerOutdated,
+  composerValidate,
+  countAdvisories,
+  parseAuditReport,
+  parseJUnitReport,
+  parseOutdated,
+  parsePhpStanReport,
+  parsePsalmReport,
+  phpLint,
+  phpStaticAnalysis,
+  phpTest,
+} from "../src/tools/php-tools.js";
 
 /**
  * The tool tests drive fake `php` and `composer` executables so the suite
@@ -19,6 +32,7 @@ import { composerAudit, composerValidate, countAdvisories, parseAuditReport, php
  *   FAKE_AUDIT_ERROR   -> audit prints a fragment and fails
  *   FAKE_ADVISORIES    -> audit reports CVEs
  *   FAKE_AUDIT_NO_LOCK -> audit prints prose instead of JSON (exit 0)
+ *   FAKE_OUTDATED      -> outdated reports one update-possible and one up-to-date
  */
 const FAKE_PHP = `#!/bin/sh
 case "$2" in
@@ -41,6 +55,12 @@ case "$1" in
     fi
     echo "./composer.json is valid"; exit 0
     ;;
+  outdated)
+    if grep -q FAKE_OUTDATED "$manifest" 2>/dev/null; then
+      printf '{"installed":[{"name":"acme/old","version":"1.0.0","latest":"2.0.0","latest-status":"update-possible"},{"name":"acme/current","version":"1.2.0","latest":"1.2.0","latest-status":"up-to-date"}]}'
+      exit 0
+    fi
+    echo "Could not load composer.json"; exit 1 ;;
   audit)
     if grep -q FAKE_AUDIT_ERROR "$manifest" 2>/dev/null; then
       echo "{"; exit 1
@@ -64,7 +84,10 @@ const originalPath = process.env.PATH;
 function workspace(files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), "php-toolkit-test-"));
   for (const [name, body] of Object.entries(files)) {
-    writeFileSync(join(dir, name), body);
+    const full = join(dir, name);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, body, { mode: 0o755 });
+    chmodSync(full, 0o755);
   }
   return dir;
 }
@@ -234,5 +257,185 @@ describe("composerAudit", () => {
     const outcome = await composerAudit(dir);
     expect(outcome.status).toBe("error");
     expect(outcome.findings).toBe(0);
+  });
+});
+
+const FAKE_PHPSTAN = `#!/bin/sh
+cat <<'JSON'
+{"totals":{"errors":2,"file_errors":2},"files":{"src/Calculator.php":{"errors":1,"messages":[{"message":"Parameter #1 $a of add expects int, string given.","line":12,"ignorable":false}]},"src/Other.php":{"errors":1,"messages":[{"message":"Method Other::bar() should return int.","line":30,"ignorable":false}]}}}
+JSON
+exit 1
+`;
+
+const FAKE_PHPSTAN_CLEAN = `#!/bin/sh
+echo "[OK] No errors"
+exit 0
+`;
+
+const FAKE_PSALM = `#!/bin/sh
+cat <<'JSON'
+[{"file_name":"src/Calculator.php","line_from":10,"message":"MixedArgument","type":"MixedArgument"},{"file_name":"src/Other.php","line_from":31,"message":"PossiblyNullArgument","type":"PossiblyNullArgument"}]
+JSON
+exit 2
+`;
+
+const FAKE_PHPUNIT_FAIL = `#!/bin/sh
+cat <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+<testsuite name="Test Suite" tests="3" assertions="5" failures="1" errors="0" skipped="0">
+<testcase name="testAdd" classname="Acme.Tests.CalculatorTest" file="/tmp/fake/tests/CalculatorTest.php" line="22" assertions="2"><failure message="Failed asserting that 3 matches expected 4.">trace</failure></testcase>
+<testcase name="testMultiply" classname="Acme.Tests.CalculatorTest" file="/tmp/fake/tests/CalculatorTest.php" line="30" assertions="3"/>
+</testsuite>
+</testsuites>
+XML
+exit 1
+`;
+
+const FAKE_PHPUNIT_CLEAN = `#!/bin/sh
+cat <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites><testsuite name="Test Suite" tests="2" assertions="4" failures="0" errors="0" skipped="0"><testcase name="testAdd" classname="Acme.Tests.CalculatorTest" line="20" assertions="4"/></testsuite></testsuites>
+XML
+exit 0
+`;
+
+const FAKE_PHPUNIT_BROKEN = `#!/bin/sh
+echo "PHPUnit 10.x - Fatal: configuration file not found"
+exit 2
+`;
+
+describe("phpStaticAnalysis", () => {
+  it("reports phpstan errors as findings", async () => {
+    const dir = workspace({ "vendor/bin/phpstan": FAKE_PHPSTAN });
+    const outcome = await phpStaticAnalysis(dir);
+    expect(outcome.status).toBe("ok");
+    expect(outcome.findings).toBe(2);
+    expect(outcome.text).toContain("src/Calculator.php:12");
+    expect(outcome.text).toContain("phpstan: 2 error(s)");
+  });
+
+  it("reports a clean phpstan run without findings", async () => {
+    const dir = workspace({ "vendor/bin/phpstan": FAKE_PHPSTAN_CLEAN });
+    const outcome = await phpStaticAnalysis(dir);
+    expect(outcome.status).toBe("ok");
+    expect(outcome.findings).toBe(0);
+  });
+
+  it("falls back to psalm and reports its issues as findings", async () => {
+    const dir = workspace({ "vendor/bin/psalm": FAKE_PSALM });
+    const outcome = await phpStaticAnalysis(dir);
+    expect(outcome.status).toBe("ok");
+    expect(outcome.findings).toBe(2);
+    expect(outcome.text).toContain("MixedArgument");
+    expect(outcome.text).toContain("psalm: 2 issue(s)");
+  });
+
+  it("fails cleanly when no analyzer is installed", async () => {
+    const dir = workspace({});
+    const outcome = await phpStaticAnalysis(dir);
+    expect(outcome.status).toBe("error");
+    expect(outcome.text).toContain("no analyzer found");
+  });
+
+  it("honors an explicit analyzer selection", async () => {
+    const dir = workspace({ "vendor/bin/psalm": FAKE_PSALM });
+    const outcome = await phpStaticAnalysis(dir, undefined, "phpstan");
+    expect(outcome.status).toBe("error");
+    expect(outcome.text).toContain("phpstan/phpstan");
+  });
+});
+
+describe("phpTest", () => {
+  it("reports failing tests as findings with file and line", async () => {
+    const dir = workspace({ "vendor/bin/phpunit": FAKE_PHPUNIT_FAIL });
+    const outcome = await phpTest(dir);
+    expect(outcome.status).toBe("ok");
+    expect(outcome.findings).toBe(1);
+    expect(outcome.text).toContain("1 failures");
+    expect(outcome.text).toContain("tests/CalculatorTest.php:22");
+  });
+
+  it("reports a clean suite with no findings", async () => {
+    const dir = workspace({ "vendor/bin/phpunit": FAKE_PHPUNIT_CLEAN });
+    const outcome = await phpTest(dir);
+    expect(outcome.status).toBe("ok");
+    expect(outcome.findings).toBe(0);
+    expect(outcome.text).toContain("0 failures");
+  });
+
+  it("treats a runner that cannot start (exit 2, prose) as a tool error", async () => {
+    const dir = workspace({ "vendor/bin/phpunit": FAKE_PHPUNIT_BROKEN });
+    const outcome = await phpTest(dir);
+    expect(outcome.status).toBe("error");
+    expect(outcome.findings).toBe(0);
+    expect(outcome.text).toContain("the runner failed");
+  });
+
+  it("refuses to run without a vendor binary", async () => {
+    const dir = workspace({});
+    const outcome = await phpTest(dir);
+    expect(outcome.status).toBe("error");
+    expect(outcome.text).toContain("never run from a bare PATH binary");
+  });
+});
+
+describe("composerOutdated", () => {
+  it("reports direct dependencies with a newer version as findings", async () => {
+    const dir = workspace({ "composer.json": "FAKE_OUTDATED {\"name\":\"acme/demo\"}" });
+    const outcome = await composerOutdated(dir);
+    expect(outcome.status).toBe("ok");
+    expect(outcome.findings).toBe(1);
+    expect(outcome.text).toContain("acme/old");
+    expect(outcome.text).not.toContain("acme/current");
+  });
+
+  it("treats a failed outdated run as an error, not as clean", async () => {
+    const dir = workspace({ "composer.json": "{\"name\":\"acme/demo\"}" });
+    const outcome = await composerOutdated(dir);
+    expect(outcome.status).toBe("error");
+  });
+});
+
+describe("parsers", () => {
+  it("parses phpstan JSON with a totals count", () => {
+    const json = JSON.stringify({
+      totals: { errors: 2 },
+      files: { "src/A.php": { messages: [{ message: "be careful", line: 7 }] } },
+    });
+    expect(parsePhpStanReport(json)).toEqual({ findings: 2, lines: ["src/A.php:7 be careful"] });
+  });
+
+  it("parses psalm JSON issue arrays", () => {
+    const json = JSON.stringify([
+      { file_name: "src/A.php", line_from: 3, message: "MixedArgument" },
+      { file_name: "src/B.php", line_from: 9, message: "PossiblyUnusedReturnValue" },
+    ]);
+    expect(parsePsalmReport(json)).toEqual({
+      findings: 2,
+      lines: ["src/A.php:3 MixedArgument", "src/B.php:9 PossiblyUnusedReturnValue"],
+    });
+  });
+
+  it("parses junit regardless of attribute order", () => {
+    const xml = '<testsuites><testsuite assertions="9" name="t" errors="1" failures="1" tests="4" skipped="2"/></testsuites>';
+    expect(parseJUnitReport(xml)).toMatchObject({ tests: 4, assertions: 9, failures: 1, errors: 1, skipped: 2 });
+  });
+
+  it("parses outdated payloads and drops up-to-date entries", () => {
+    const json = JSON.stringify({
+      installed: [
+        { name: "acme/old", version: "1.0.0", latest: "2.0.0", "latest-status": "update-possible" },
+        { name: "acme/current", version: "1.2.0", latest: "1.2.0", "latest-status": "up-to-date" },
+      ],
+    });
+    expect(parseOutdated(json)).toEqual([{ name: "acme/old", from: "1.0.0", to: "2.0.0", status: "update-possible" }]);
+  });
+
+  it("returns null for prose instead of a report", () => {
+    expect(parseJUnitReport("PHPUnit 10.x\nNo tests executed")).toBeNull();
+    expect(parseOutdated("not json at all")).toBeNull();
+    expect(parsePhpStanReport("not json at all")).toBeNull();
+    expect(parsePsalmReport("not json at all")).toBeNull();
   });
 });

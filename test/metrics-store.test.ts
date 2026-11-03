@@ -475,4 +475,25 @@ describe("MetricsStore", () => {
     expect(result.truncated).toBe(false);
     expect(result.projects.length).toBe(450);
   });
+
+  it("wipes the persisted document and starts over on reset", async () => {
+    const key = storageKeyFor(PROJECT.path);
+    const { storage, data, remove } = fakeStorage({
+      [key]: { version: 2, triggerHits: 7, tools: {}, commands: {} },
+    });
+    const store = new MetricsStore(storage, PROJECT);
+    await store.init();
+
+    await store.recordTrigger();
+    const ok = await store.reset();
+    expect(ok).toBe(true);
+    expect(remove).toHaveBeenCalledWith(key);
+    expect(data.has(key)).toBe(false);
+    expect(store.getSnapshot().triggerHits).toBe(0);
+
+    // Tracking restarts cleanly after the wipe.
+    await store.recordTrigger();
+    await store.flush();
+    expect((data.get(key) as { triggerHits: number }).triggerHits).toBe(1);
+  });
 });

@@ -32,4 +32,6 @@ export declare class MetricsRegistry {
     initActive(): Promise<void>;
     /** Writes pending changes for every known project. */
     flushAll(): Promise<void>;
+    /** Deletes the active project's persisted document and starts over. */
+    resetActive(): Promise<boolean>;
 }

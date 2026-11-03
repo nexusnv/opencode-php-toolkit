@@ -1,5 +1,16 @@
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
+/** Config files the toolkit knows how to pick up; presence is all that is reported. */
+const CONFIG_FILES = [
+    "phpstan.neon",
+    "phpstan.neon.dist",
+    "phpstan.dist.neon",
+    "psalm.xml",
+    "psalm.xml.dist",
+    ".php-cs-fixer.php",
+    ".php-cs-fixer.dist.php",
+    "rector.php",
+];
 function has(deps, needle) {
     return Object.keys(deps).some((k) => k === needle || k.endsWith("/" + needle));
 }
@@ -25,6 +36,8 @@ export async function detectPhpProject(directory) {
             deptrac: false,
             infection: false,
         },
+        configs: [],
+        platformPhp: null,
         laravelHint: false,
         symfonyHint: false,
     };
@@ -67,6 +80,8 @@ export async function detectPhpProject(directory) {
         };
         empty.laravelHint = has(all, "laravel/framework");
         empty.symfonyHint = Object.keys(all).some((k) => k.startsWith("symfony/"));
+        const platform = composer.config?.platform?.php;
+        empty.platformPhp = typeof platform === "string" ? platform : null;
     }
     catch {
         // no composer.json — stay framework-agnostic, report empty
@@ -79,6 +94,17 @@ export async function detectPhpProject(directory) {
     catch {
         // no lock
     }
+    // Static analysis/fixer configs are common signals - cheap to probe in parallel.
+    const present = await Promise.all(CONFIG_FILES.map(async (name) => {
+        try {
+            await access(join(directory, name));
+            return name;
+        }
+        catch {
+            return null;
+        }
+    }));
+    empty.configs = present.filter((name) => name !== null);
     return empty;
 }
 export function formatDetection(info) {
@@ -94,6 +120,10 @@ export function formatDetection(info) {
         .filter(([, v]) => v)
         .map(([k]) => k);
     lines.push(`detected dev tools: ${tools.length ? tools.join(", ") : "none"}`);
+    if (info.configs.length)
+        lines.push(`configs: ${info.configs.join(", ")}`);
+    if (info.platformPhp)
+        lines.push(`composer platform.php: ${info.platformPhp}`);
     const psr4 = Object.entries(info.autoloadPsr4);
     lines.push(psr4.length ? `psr-4: ${psr4.map(([k, v]) => `${k}=>${v}`).join(", ")}` : "psr-4: not declared");
     if (info.laravelHint)

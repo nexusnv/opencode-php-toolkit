@@ -45,6 +45,26 @@ describe("detectPhpProject", () => {
     expect(info.detectedTools.phpstan).toBe(true);
   });
 
+  it("detects analyzer configs and composer platform.php", async () => {
+    const dir = workspace({
+      "composer.json": manifest({ config: { platform: { php: "8.2" } } }),
+      "phpstan.neon": "parameters:\n  level: 8\n",
+      "rector.php": "<?php\nreturn [];\n",
+    });
+    const info = await detectPhpProject(dir);
+    expect(info.configs).toEqual(expect.arrayContaining(["phpstan.neon", "rector.php"]));
+    expect(info.platformPhp).toBe("8.2");
+    expect(formatDetection(info)).toContain("phpstan.neon");
+    expect(formatDetection(info)).toContain("platform.php: 8.2");
+  });
+
+  it("lists no configs for a bare project", async () => {
+    const dir = workspace({ "composer.json": manifest() });
+    const info = await detectPhpProject(dir);
+    expect(info.configs).toEqual([]);
+    expect(info.platformPhp).toBeNull();
+  });
+
   it("reports a malformed manifest as a finding instead of as an empty project", async () => {
     const dir = workspace({ "composer.json": "{ this is not json" });
     const info = await detectPhpProject(dir);

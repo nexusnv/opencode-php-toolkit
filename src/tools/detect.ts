@@ -23,9 +23,25 @@ export interface PhpProjectInfo {
     deptrac: boolean;
     infection: boolean;
   };
+  /** Static-analysis/style-fixer config files present in the project root (just the file names). */
+  configs: string[];
+  /** composer.json `config.platform.php`, when pinned. */
+  platformPhp: string | null;
   laravelHint: boolean;
   symfonyHint: boolean;
 }
+
+/** Config files the toolkit knows how to pick up; presence is all that is reported. */
+const CONFIG_FILES = [
+  "phpstan.neon",
+  "phpstan.neon.dist",
+  "phpstan.dist.neon",
+  "psalm.xml",
+  "psalm.xml.dist",
+  ".php-cs-fixer.php",
+  ".php-cs-fixer.dist.php",
+  "rector.php",
+] as const;
 
 function has(deps: Record<string, string>, needle: string): boolean {
   return Object.keys(deps).some((k) => k === needle || k.endsWith("/" + needle));
@@ -53,6 +69,8 @@ export async function detectPhpProject(directory: string): Promise<PhpProjectInf
       deptrac: false,
       infection: false,
     },
+    configs: [],
+    platformPhp: null,
     laravelHint: false,
     symfonyHint: false,
   };
@@ -63,6 +81,7 @@ export async function detectPhpProject(directory: string): Promise<PhpProjectInf
       ["require-dev"]?: Record<string, string>;
       autoload?: { ["psr-4"]?: Record<string, string> };
       scripts?: Record<string, string | string[]>;
+      config?: { platform?: { php?: unknown } };
     };
     try {
       composer = JSON.parse(raw) as typeof composer;
@@ -99,6 +118,8 @@ export async function detectPhpProject(directory: string): Promise<PhpProjectInf
     };
     empty.laravelHint = has(all, "laravel/framework");
     empty.symfonyHint = Object.keys(all).some((k) => k.startsWith("symfony/"));
+    const platform = composer.config?.platform?.php;
+    empty.platformPhp = typeof platform === "string" ? platform : null;
   } catch {
     // no composer.json — stay framework-agnostic, report empty
   }
@@ -109,6 +130,18 @@ export async function detectPhpProject(directory: string): Promise<PhpProjectInf
   } catch {
     // no lock
   }
+  // Static analysis/fixer configs are common signals - cheap to probe in parallel.
+  const present = await Promise.all(
+    CONFIG_FILES.map(async (name) => {
+      try {
+        await access(join(directory, name));
+        return name;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  empty.configs = present.filter((name) => name !== null);
   return empty;
 }
 
@@ -125,6 +158,8 @@ export function formatDetection(info: PhpProjectInfo): string {
     .filter(([, v]) => v)
     .map(([k]) => k);
   lines.push(`detected dev tools: ${tools.length ? tools.join(", ") : "none"}`);
+  if (info.configs.length) lines.push(`configs: ${info.configs.join(", ")}`);
+  if (info.platformPhp) lines.push(`composer platform.php: ${info.platformPhp}`);
   const psr4 = Object.entries(info.autoloadPsr4);
   lines.push(psr4.length ? `psr-4: ${psr4.map(([k, v]) => `${k}=>${v}`).join(", ")}` : "psr-4: not declared");
   if (info.laravelHint) lines.push("note: Laravel detected — this core plugin stays agnostic; use opencode-laravel-toolkit for framework rules.");

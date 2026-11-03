@@ -150,6 +150,12 @@ export declare class MetricsStore {
      * so upgrading does not lose the history a user already had.
      */
     private adoptLegacyDocument;
+    /**
+     * Deletes this project's persisted document and starts over with an empty
+     * one. Pending increments are discarded too - this is a full wipe, used by
+     * `php_metrics` when the user explicitly asks for it.
+     */
+    reset(): Promise<boolean>;
     private markDirty;
     private scheduleRetry;
     private reportFailure;

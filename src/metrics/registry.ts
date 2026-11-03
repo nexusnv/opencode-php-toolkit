@@ -72,4 +72,9 @@ export class MetricsRegistry {
   async flushAll(): Promise<void> {
     await Promise.all([...this.stores.values()].map((store) => store.flush().catch(() => {})));
   }
+
+  /** Deletes the active project's persisted document and starts over. */
+  async resetActive(): Promise<boolean> {
+    return this.active.reset();
+  }
 }

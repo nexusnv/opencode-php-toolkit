@@ -3,7 +3,7 @@ import { basename, join } from "node:path";
 import { Plugin } from "@opencode/plugin";
 import { COMMAND_DEFS, SKILL_IDS, PKG_ROOT, loadText, parseFrontmatter } from "./content.js";
 import { detectPhpProject, formatDetection } from "./tools/detect.js";
-import { composerAudit, composerValidate, phpLint, type ToolOutcome } from "./tools/php-tools.js";
+import { composerAudit, composerOutdated, composerValidate, phpLint, phpStaticAnalysis, phpTest, type ToolOutcome } from "./tools/php-tools.js";
 import { MetricsRegistry, resolveProjectScope } from "./metrics/registry.js";
 import type { MetricsProject } from "./metrics/store.js";
 import { formatMetricsSnapshot } from "./metrics/format.js";
@@ -103,7 +103,7 @@ export default Plugin.define({
           await ctx.skill.transform((editor) => {
             for (const s of skills) {
               if (!editor.get(s.id)) {
-                editor.add({ id: s.id as never, name: s.name as never, description: s.description, path: s.path as never, content: s.content });
+                editor.add({ id: s.id as never, name: s.name as never, description: s.description, path: s.path as never, content: s.content, autoinvoke: true });
               }
             }
           }),
@@ -153,10 +153,13 @@ export default Plugin.define({
     try {
       track(
         await ctx.tool.transform((editor) => {
-          editor.namespace({ name: "php", description: "Framework-agnostic PHP project tools (read-only by default)" });
+          editor.namespace({
+            name: "php",
+            description: "Framework-agnostic PHP project tools (read-only by default; php_test executes the project's test suite)",
+          });
           editor.add({
             name: "project_detect",
-            description: "Detect PHP project intel from composer.json/lock: PHP requirement, PSR-4 roots, PHPUnit/Pest/PHPStan/Psalm/CS-Fixer/Rector presence. No shell exec.",
+            description: "Detect PHP project intel from composer.json/lock: PHP requirement, PSR-4 roots, PHPUnit/Pest/PHPStan/Psalm/CS-Fixer/Rector presence, analyzer/fixer config files, composer platform.php. No shell exec.",
             input: { type: "object", properties: { directory: { type: "string" } }, additionalProperties: false },
             options: { namespace: "php" },
             execute: tracked("php_project_detect", async (input: { directory?: string }) => {
@@ -205,15 +208,70 @@ export default Plugin.define({
             }),
           });
           editor.add({
+            name: "composer_outdated",
+            description:
+              "Run composer outdated --direct --format=json (read-only, hits the network). Lists direct dependencies with a newer version; the count is reported as findings.",
+            input: { type: "object", properties: { directory: { type: "string" } }, additionalProperties: false },
+            options: { namespace: "php" },
+            execute: tracked("php_composer_outdated", async (input: { directory?: string }, context) => {
+              const cwd = input.directory ?? dir;
+              return composerOutdated(cwd, context.signal);
+            }),
+          });
+          editor.add({
+            name: "static_analysis",
+            description:
+              "Run PHPStan (or Psalm when PHPStan is absent) on the project with JSON output. Read-only; needs the dev dependency installed (vendor/bin). Analysis errors count as findings; a broken analyzer is an error, not a finding. Pass `tool` to force 'phpstan' or 'psalm'.",
+            input: {
+              type: "object",
+              properties: {
+                directory: { type: "string" },
+                tool: { type: "string", enum: ["auto", "phpstan", "psalm"], description: "Force an analyzer. Default: auto (PHPStan first)." },
+              },
+              additionalProperties: false,
+            },
+            options: { namespace: "php" },
+            execute: tracked("php_static_analysis", async (input: { directory?: string; tool?: "auto" | "phpstan" | "psalm" }, context) => {
+              const cwd = input.directory ?? dir;
+              return phpStaticAnalysis(cwd, context.signal, input.tool ?? "auto");
+            }),
+          });
+          editor.add({
+            name: "test",
+            description:
+              "Run the project's test suite via vendor/bin/pest or vendor/bin/phpunit and report failures as findings. Executes project code; needs the dev dependencies installed. Failing tests are findings, not tool errors.",
+            input: {
+              type: "object",
+              properties: {
+                directory: { type: "string" },
+                filter: { type: "string", description: "Optional --filter pattern passed to the runner." },
+              },
+              additionalProperties: false,
+            },
+            options: { namespace: "php" },
+            execute: tracked("php_test", async (input: { directory?: string; filter?: string }, context) => {
+              const cwd = input.directory ?? dir;
+              return phpTest(cwd, context.signal, input.filter);
+            }),
+          });
+          editor.add({
             name: "metrics",
             description:
-              "Show local PHP toolkit usage metrics for this project: tool runs, ok/error outcomes, issues surfaced, command usage, PHP prompt hits. Stored locally; the plugin sends no telemetry.",
+              "Show local PHP toolkit usage metrics for this project: tool runs, ok/error outcomes, issues surfaced, command usage, PHP prompt hits. Stored locally; the plugin sends no telemetry. Input: `reset: true` deletes this project's metrics document (wipe, no undo); `export: true` returns the snapshot as raw JSON instead of the rendered view.",
             input: {
               type: "object",
               properties: {
                 allProjects: {
                   type: "boolean",
                   description: "Also show the per-project breakdown across this machine.",
+                },
+                reset: {
+                  type: "boolean",
+                  description: "Delete this project's metrics document and start over (no undo).",
+                },
+                export: {
+                  type: "boolean",
+                  description: "Return the snapshot as raw JSON instead of the rendered view.",
                 },
               },
               additionalProperties: false,
@@ -224,8 +282,24 @@ export default Plugin.define({
               // Write everything this process is holding before reading, so
               // the machine-wide view is not missing our own pending events.
               await metrics.flushAll();
-              const snapshot = metrics.active.getSnapshot();
               const all = (input as { allProjects?: boolean } | undefined)?.allProjects;
+              const reset = (input as { reset?: boolean } | undefined)?.reset;
+              const exportJson = (input as { export?: boolean } | undefined)?.export;
+              const snapshot = metrics.active.getSnapshot();
+              const parts: string[] = [];
+              if (exportJson) {
+                // Export reflects the state before any reset is applied.
+                parts.push(`JSON snapshot (current state):\n${JSON.stringify(snapshot, null, 2)}`);
+              }
+              if (reset) {
+                const ok = await metrics.resetActive();
+                parts.push(
+                  ok
+                    ? "php_metrics: metrics document for this project deleted. Tracking starts from zero on the next tool call."
+                    : "php_metrics: could not delete the metrics document (storage error) - it was left untouched.",
+                );
+              }
+              if (parts.length) return { content: parts.join("\n\n") };
               const scan = all ? await metrics.active.listOtherProjects() : undefined;
               return { content: formatMetricsSnapshot(snapshot, scan) };
             },

@@ -98,3 +98,19 @@ describe("MetricsRegistry", () => {
     expect(registry.active.getSnapshot().triggerHits).toBe(1);
   });
 });
+
+describe("MetricsRegistry resetActive", () => {
+  it("wipes the active project's persisted document", async () => {
+    const key = storageKeyFor(ACTIVE.path);
+    const { storage, data } = fakeStorage({
+      [key]: { version: 2, triggerHits: 5, tools: {}, commands: {} },
+    });
+    const registry = new MetricsRegistry(storage, ACTIVE);
+    await registry.initActive();
+    expect(data.has(key)).toBe(true);
+
+    const ok = await registry.resetActive();
+    expect(ok).toBe(true);
+    expect(data.has(key)).toBe(false);
+  });
+});
