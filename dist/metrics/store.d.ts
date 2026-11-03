@@ -131,7 +131,10 @@ export declare class MetricsStore {
      *
      * Writes are coalesced, so a burst of tool calls costs a single storage
      * write. The write merges the pending increments into the document that is
-     * on disk right now, so a concurrent session's counts are not lost.
+     * on disk right now, so a concurrent session's counts are not lost. When
+     * the document cannot be re-read, or is from a newer format, the write is
+     * skipped instead of overwriting counts this session cannot see; anything
+     * recorded in the meantime stays pending.
      */
     flush(): Promise<void>;
     /** Documents of the other projects tracked on this machine. */

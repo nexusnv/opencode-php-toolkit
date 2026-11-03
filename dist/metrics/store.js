@@ -114,6 +114,50 @@ function isEmptyDelta(delta) {
         Object.keys(delta.tools).length === 0 &&
         Object.keys(delta.commands).length === 0);
 }
+function later(a, b) {
+    return a.lastUsedAt >= b.lastUsedAt ? a : b;
+}
+/**
+ * Combines two pending deltas, keeping every increment from both. Used when a
+ * flush has to defer a write: increments recorded while that flush was in
+ * flight must survive the retry, not be overwritten by it.
+ */
+function mergeDelta(a, b) {
+    const tools = {};
+    for (const [name, e] of Object.entries(a.tools))
+        tools[name] = { ...e };
+    for (const [name, e] of Object.entries(b.tools)) {
+        const cur = tools[name];
+        if (!cur) {
+            tools[name] = { ...e };
+            continue;
+        }
+        const last = later(cur, e);
+        tools[name] = {
+            runs: cur.runs + e.runs,
+            ok: cur.ok + e.ok,
+            error: cur.error + e.error,
+            findings: cur.findings + e.findings,
+            lastUsedAt: last.lastUsedAt,
+            lastStatus: last.lastStatus ?? cur.lastStatus ?? e.lastStatus,
+        };
+    }
+    const commands = {};
+    for (const [name, e] of Object.entries(a.commands))
+        commands[name] = { ...e };
+    for (const [name, e] of Object.entries(b.commands)) {
+        const cur = commands[name];
+        if (!cur) {
+            commands[name] = { ...e };
+            continue;
+        }
+        commands[name] = {
+            count: cur.count + e.count,
+            lastUsedAt: later(cur, e).lastUsedAt,
+        };
+    }
+    return { tools, commands, triggerHits: a.triggerHits + b.triggerHits };
+}
 /** Applies pending increments to a document, producing the merged view. */
 function applyDelta(base, delta) {
     const tools = {};
@@ -270,7 +314,10 @@ export class MetricsStore {
      *
      * Writes are coalesced, so a burst of tool calls costs a single storage
      * write. The write merges the pending increments into the document that is
-     * on disk right now, so a concurrent session's counts are not lost.
+     * on disk right now, so a concurrent session's counts are not lost. When
+     * the document cannot be re-read, or is from a newer format, the write is
+     * skipped instead of overwriting counts this session cannot see; anything
+     * recorded in the meantime stays pending.
      */
     async flush() {
         if (this.timer) {
@@ -291,18 +338,31 @@ export class MetricsStore {
             return;
         const pending = this.delta;
         this.delta = emptyDelta();
+        // Read the latest document first so a concurrent writer's counts survive.
+        // If the document cannot be read — or belongs to a newer format — the
+        // write is skipped rather than overwriting counts we cannot see.
+        let latest;
         try {
-            // Read the latest document first so a concurrent writer's counts survive.
-            let latest = this.base;
-            try {
-                const raw = await this.storage.get(this.key);
-                const loaded = deserialize(raw, this.project);
-                if (loaded.supported)
-                    latest = loaded.metrics;
+            const raw = await this.storage.get(this.key);
+            const loaded = deserialize(raw, this.project);
+            if (!loaded.supported) {
+                // A newer format owns this document - do not overwrite it. Same rule
+                // as init(): this store refuses to write what it cannot read.
+                this.writable = false;
+                this.reportFailure("metrics write skipped: stored document is from a newer format; this session is read-only for the rest of its lifetime");
+                this.delta = mergeDelta(pending, this.delta);
+                return;
             }
-            catch {
-                // Fall back to our own base document.
-            }
+            latest = loaded.metrics;
+        }
+        catch {
+            // Could not confirm the latest document - keep everything pending and
+            // retry later instead of overwriting counts we cannot see.
+            this.delta = mergeDelta(pending, this.delta);
+            this.scheduleRetry();
+            return;
+        }
+        try {
             const merged = applyDelta(latest, pending);
             await this.storage.set(this.key, merged);
             this.base = merged;
@@ -311,8 +371,9 @@ export class MetricsStore {
             this.reportedFailure = false;
         }
         catch {
-            // Keep the change pending so the next flush retries it.
-            this.delta = pending;
+            // Keep the change pending so the next flush retries it. Increments
+            // recorded while this flush was in flight survive the retry too.
+            this.delta = mergeDelta(pending, this.delta);
             this.scheduleRetry();
         }
     }

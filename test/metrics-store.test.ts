@@ -277,6 +277,83 @@ describe("MetricsStore", () => {
     expect((data.get(key) as { version: number }).version).toBe(99);
   });
 
+  it("keeps increments recorded while a flush was in flight when the write fails", async () => {
+    const { storage, set } = fakeStorage();
+    const silenced = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const store = new MetricsStore(storage, PROJECT);
+      await store.init();
+
+      set.mockRejectedValueOnce(new Error("read-only filesystem"));
+      await store.recordTool({ tool: "php_lint", status: "ok" });
+      // Not awaited: the tool records another run while flush() re-reads storage.
+      const flushPromise = store.flush();
+      await store.recordTool({ tool: "php_composer_audit", status: "ok" });
+      await flushPromise;
+
+      const tools = store.getSnapshot().tools;
+      expect(tools.php_lint?.runs).toBe(1);
+      expect(tools.php_composer_audit?.runs).toBe(1);
+    } finally {
+      silenced.mockRestore();
+    }
+  });
+
+  it("does not overwrite a document a newer format adopted after init", async () => {
+    const key = storageKeyFor(PROJECT.path);
+    const { storage, set, data } = fakeStorage({
+      [key]: { version: 2, triggerHits: 5, tools: {}, commands: {} },
+    });
+    const silenced = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const store = new MetricsStore(storage, PROJECT);
+      await store.init();
+
+      // A newer toolkit rewrites the document after this session loaded it.
+      data.set(key, { version: 99, triggerHits: 42, tools: {}, commands: {} });
+
+      await store.recordTrigger();
+      await store.flush();
+
+      expect(set).not.toHaveBeenCalled();
+      expect((data.get(key) as { version: number }).version).toBe(99);
+      expect((data.get(key) as { triggerHits: number }).triggerHits).toBe(42);
+      // The session is read-only from now on, but its snapshot still shows
+      // its own pending work.
+      expect(store.canWrite).toBe(false);
+      expect(store.getSnapshot().triggerHits).toBe(6);
+    } finally {
+      silenced.mockRestore();
+    }
+  });
+
+  it("retries instead of overwriting when the document cannot be re-read mid-flush", async () => {
+    const key = storageKeyFor(PROJECT.path);
+    const { storage, set, data } = fakeStorage({
+      [key]: { version: 2, triggerHits: 9, tools: {}, commands: {} },
+    });
+    const silenced = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const store = new MetricsStore(storage, PROJECT);
+      await store.init();
+      storage.get = async () => {
+        throw new Error("disk on fire");
+      };
+
+      await store.recordTrigger();
+      await store.flush();
+
+      expect(set).not.toHaveBeenCalled();
+      expect((data.get(key) as { triggerHits: number }).triggerHits).toBe(9);
+      // A transient read failure is retryable: the session stays writable and
+      // its snapshot still counts its own pending increment.
+      expect(store.canWrite).toBe(true);
+      expect(store.getSnapshot().triggerHits).toBe(10);
+    } finally {
+      silenced.mockRestore();
+    }
+  });
+
   it("merges concurrent updates instead of overwriting them", async () => {
     const { storage, data } = fakeStorage();
     const first = new MetricsStore(storage, PROJECT);

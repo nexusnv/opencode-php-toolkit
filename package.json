@@ -12,6 +12,7 @@
   "files": [
     "dist",
     "index.js",
+    "postinstall.mjs",
     "agents",
     "commands",
     "skills",
@@ -19,6 +20,7 @@
     "LICENSE"
   ],
   "scripts": {
+    "postinstall": "node postinstall.mjs",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",

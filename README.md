@@ -18,6 +18,11 @@ Published package (after `npm publish`):
 }
 ```
 
+> On install, the package copies the four `agents/php-*.md` files into
+> `~/.config/opencode/agents/` as a convenience (see below). Set
+> `PHP_TOOLKIT_SKIP_AGENT_COPY=1` before installing to skip that copy; the
+> rest of the plugin is unaffected.
+
 From git (no npm publish needed — `dist/` is committed, so clones work
 as-is; always run `npm run build` before committing):
 
@@ -61,7 +66,7 @@ opencode plugin add file:///home/leonidas/dev/nexusnv/opencode-php-toolkit
 
 ## What you get
 
-- Agents (`agents/php-*.md`, `mode: subagent`): `php-reviewer`, `php-debugger`, `php-modernizer`, `php-tester`. Copied to `~/.config/opencode/agents/` on install as convenience (v2 `AgentEditor` has no `add`; transforms can't create agents — files are the source of truth).
+- Agents (`agents/php-*.md`, `mode: subagent`): `php-reviewer`, `php-debugger`, `php-modernizer`, `php-tester`. On install, the package's `postinstall` script copies these four files into `~/.config/opencode/agents/` as a convenience (v2 `AgentEditor` has no `add`; transforms can't create agents — files are the source of truth). Set `PHP_TOOLKIT_SKIP_AGENT_COPY=1` in the environment to opt out. The script writes nothing besides those four files (the OpenCode `commands/` directory is not touched). To undo after install, delete `php-reviewer.md`, `php-debugger.md`, `php-modernizer.md` and `php-tester.md` from `~/.config/opencode/agents/`.
 - Skills (8, autoinvoke): `php-standards`, `php-static-analysis`, `php-testing`, `php-security`, `php-modernize`, `php-composer`, `php-architecture`, `php-debug`.
 - Commands (7): `/php-review`, `/php-analyze`, `/php-fix-style`, `/php-test`, `/php-audit`, `/php-upgrade`, `/php-scaffold`.
 - Tools (`php_*` namespace, read-only): `php_project_detect`, `php_lint`, `php_composer_audit`, `php_metrics`.

@@ -1,6 +1,6 @@
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import { Plugin } from "@opencode/plugin";
-import { COMMAND_DEFS, SKILL_IDS, loadText, parseFrontmatter } from "./content.js";
+import { COMMAND_DEFS, SKILL_IDS, PKG_ROOT, loadText, parseFrontmatter } from "./content.js";
 import { detectPhpProject, formatDetection } from "./tools/detect.js";
 import { composerAudit, composerValidate, phpLint } from "./tools/php-tools.js";
 import { MetricsRegistry, resolveProjectScope } from "./metrics/registry.js";
@@ -70,7 +70,7 @@ export default Plugin.define({
                         id,
                         name: front.name ?? skillTitle(id),
                         description: front.description ?? `${skillTitle(id)} for framework-agnostic PHP 8.1+.`,
-                        path: `${dir}/skills/${id}/SKILL.md`,
+                        path: join(PKG_ROOT, "skills", id, "SKILL.md"),
                         content,
                     });
                 }
