@@ -1,5 +1,7 @@
 # opencode-php-toolkit
 
+[![CI](https://github.com/nexusnv/opencode-php-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/nexusnv/opencode-php-toolkit/actions/workflows/ci.yml)
+
 Framework-agnostic PHP toolkit for OpenCode v2. Hard-to-miss defaults for PHP 8.1+ developers: review, static analysis, tests, security, modernize, composer, architecture, debug.
 
 Laravel/Symfony specifics live in sibling repos (`opencode-laravel-toolkit`, `opencode-symfony-toolkit`). This package never assumes a framework — it detects and defers.
@@ -162,6 +164,12 @@ php -l fixtures/php-sample/src/Calculator.php
 > The test suite needs Node >= 22.12 (vitest 5). The published plugin itself
 > runs on Node >= 20. The tests use fake `php` and `composer` executables, so
 > they do not need PHP or Composer installed.
+
+CI runs the same checks on every push to `main` and on pull requests
+(Node 22/24 with a `dist/`-drift check — any change to `src/` must ship with
+the rebuilt `dist/` in the same commit — plus a Node 20 compat job that skips
+the suite). See [CHANGELOG.md](./CHANGELOG.md) for what changed between
+releases.
 
 ## Layout
 
