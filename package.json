@@ -4,6 +4,13 @@
   "description": "Framework-agnostic PHP toolkit for OpenCode v2 — review, analyze, test, secure, modernize.",
   "type": "module",
   "license": "MIT",
+  "author": "NexusNV",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nexusnv/opencode-php-toolkit.git"
+  },
+  "bugs": "https://github.com/nexusnv/opencode-php-toolkit/issues",
+  "homepage": "https://github.com/nexusnv/opencode-php-toolkit#readme",
   "exports": {
     ".": "./dist/index.js"
   },
@@ -12,13 +19,16 @@
   "files": [
     "dist",
     "index.js",
+    "postinstall.mjs",
     "agents",
     "commands",
     "skills",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
+    "postinstall": "node postinstall.mjs",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -1,3 +1,6 @@
+import { mkdtempSync, realpathSync, symlinkSync, rmSync } from "node:fs";
+import { basename, join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import { MetricsRegistry, resolveProjectScope } from "../src/metrics/registry.js";
 import { storageKeyFor, type MetricsStorage } from "../src/metrics/store.js";
@@ -36,6 +39,38 @@ describe("resolveProjectScope", () => {
     expect(resolveProjectScope(ACTIVE.path, "/home/dev/other-app")).toBe("/home/dev/other-app");
     expect(resolveProjectScope(ACTIVE.path, "../other-app")).toBe("/home/dev/other-app");
   });
+
+  it("attributes work done through an inside-project symlink to the real location", () => {
+    const root = mkdtempSync(join(tmpdir(), "php-toolkit-scope-"));
+    const outside = mkdtempSync(join(tmpdir(), "php-toolkit-outside-"));
+    const link = join(root, "outside-link");
+    symlinkSync(outside, link);
+    try {
+      expect(resolveProjectScope(root, link)).toBe(realpathSync(outside));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves to the canonical root so symlinked and direct openings share one key", () => {
+    const real = mkdtempSync(join(tmpdir(), "php-toolkit-canonical-"));
+    const linkParent = mkdtempSync(join(tmpdir(), "php-toolkit-linkparent-"));
+    const link = join(linkParent, "linked");
+    symlinkSync(real, link);
+    try {
+      const canonical = realpathSync(real);
+      expect(resolveProjectScope(link, undefined)).toBe(canonical);
+      expect(resolveProjectScope(link, "src")).toBe(canonical);
+      expect(resolveProjectScope(link, join(real, "src"))).toBe(canonical);
+      // A different project is still its own scope.
+      expect(resolveProjectScope(link, "../elsewhere")).not.toBe(canonical);
+    } finally {
+      rmSync(link, { recursive: true, force: true });
+      rmSync(real, { recursive: true, force: true });
+      rmSync(linkParent, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("MetricsRegistry", () => {
@@ -45,6 +80,30 @@ describe("MetricsRegistry", () => {
     expect(registry.storeFor("/home/dev/a")).toBe(registry.storeFor("/home/dev/a"));
     expect(registry.storeFor("/home/dev/a")).not.toBe(registry.storeFor("/home/dev/b"));
     expect(registry.active).toBe(registry.storeFor(ACTIVE.path));
+  });
+
+  it("keys the active project by its canonical path", async () => {
+    const real = mkdtempSync(join(tmpdir(), "php-toolkit-active-"));
+    const linkParent = mkdtempSync(join(tmpdir(), "php-toolkit-activeparent-"));
+    const link = join(linkParent, "linked");
+    symlinkSync(real, link);
+    try {
+      const { storage, data } = fakeStorage();
+      const registry = new MetricsRegistry(storage, { name: "linked", path: link });
+      await registry.initActive();
+      await registry.active.recordTrigger();
+      await registry.flushAll();
+
+      // A session that opened the same project directly shares the document.
+      const direct = new MetricsRegistry(storage, { name: basename(real), path: real });
+      await direct.initActive();
+      expect(direct.active.getSnapshot().triggerHits).toBe(1);
+      expect(data.has(storageKeyFor(realpathSync(real)))).toBe(true);
+    } finally {
+      rmSync(link, { recursive: true, force: true });
+      rmSync(real, { recursive: true, force: true });
+      rmSync(linkParent, { recursive: true, force: true });
+    }
   });
 
   it("records work against the project the tool actually ran in", async () => {
@@ -80,5 +139,24 @@ describe("MetricsRegistry", () => {
     // The registry still works - it just cannot persist that project.
     await registry.active.recordTrigger();
     expect(registry.active.getSnapshot().triggerHits).toBe(1);
+  });
+});
+
+describe("MetricsRegistry resetActive", () => {
+  it("clears the active project's persisted metrics", async () => {
+    const key = storageKeyFor(ACTIVE.path);
+    const { storage, data } = fakeStorage({
+      [key]: { version: 2, triggerHits: 5, tools: {}, commands: {} },
+    });
+    const registry = new MetricsRegistry(storage, ACTIVE);
+    await registry.initActive();
+    expect(data.has(key)).toBe(true);
+
+    const ok = await registry.resetActive();
+    expect(ok).toBe(true);
+    // Cleared to an empty document, not removed: legacy history must not be
+    // re-adopted for this project on the next startup.
+    expect((data.get(key) as { triggerHits: number }).triggerHits).toBe(0);
+    expect(registry.active.getSnapshot().triggerHits).toBe(0);
   });
 });

@@ -63,6 +63,12 @@ export type MetricsProject = { name: string; path: string };
 /**
  * Minimal structural storage contract used by the metrics store.
  * Matches OpenCode's local storage domain (async JSON key-value persistence).
+ *
+ * `set()` must be commit-or-reject: a call that persists the value *and*
+ * rejects its promise is a contract violation - flush() would then re-apply
+ * increments that already landed on the next retry. The backend also exposes
+ * no compare-and-swap, so concurrent processes merge on read (last writer
+ * wins for writes that overlap between the read and the write).
  */
 export interface MetricsStorage {
   get(key: string): Promise<unknown>;
@@ -174,7 +180,7 @@ export function deserialize(
 }
 
 /** Pending increments that have not been persisted yet. */
-type MetricsDelta = {
+export type MetricsDelta = {
   tools: Record<string, { runs: number; ok: number; error: number; findings: number; lastUsedAt: string; lastStatus: ToolRunStatus | null }>;
   commands: Record<string, { count: number; lastUsedAt: string }>;
   triggerHits: number;
@@ -190,6 +196,52 @@ function isEmptyDelta(delta: MetricsDelta): boolean {
     Object.keys(delta.tools).length === 0 &&
     Object.keys(delta.commands).length === 0
   );
+}
+
+function later<T extends { lastUsedAt: string }>(a: T, b: T): T {
+  // Strictly greater: on a timestamp tie, b (the delta recorded later by
+  // mergeDelta's caller) wins, so the newest status survives a merge.
+  return a.lastUsedAt > b.lastUsedAt ? a : b;
+}
+
+/**
+ * Combines two pending deltas, keeping every increment from both. Used when a
+ * flush has to defer a write: increments recorded while that flush was in
+ * flight must survive the retry, not be overwritten by it.
+ */
+export function mergeDelta(a: MetricsDelta, b: MetricsDelta): MetricsDelta {
+  const tools: MetricsDelta["tools"] = {};
+  for (const [name, e] of Object.entries(a.tools)) tools[name] = { ...e };
+  for (const [name, e] of Object.entries(b.tools)) {
+    const cur = tools[name];
+    if (!cur) {
+      tools[name] = { ...e };
+      continue;
+    }
+    const last = later(cur, e);
+    tools[name] = {
+      runs: cur.runs + e.runs,
+      ok: cur.ok + e.ok,
+      error: cur.error + e.error,
+      findings: cur.findings + e.findings,
+      lastUsedAt: last.lastUsedAt,
+      lastStatus: last.lastStatus ?? cur.lastStatus ?? e.lastStatus,
+    };
+  }
+  const commands: MetricsDelta["commands"] = {};
+  for (const [name, e] of Object.entries(a.commands)) commands[name] = { ...e };
+  for (const [name, e] of Object.entries(b.commands)) {
+    const cur = commands[name];
+    if (!cur) {
+      commands[name] = { ...e };
+      continue;
+    }
+    commands[name] = {
+      count: cur.count + e.count,
+      lastUsedAt: later(cur, e).lastUsedAt,
+    };
+  }
+  return { tools, commands, triggerHits: a.triggerHits + b.triggerHits };
 }
 
 /** Applies pending increments to a document, producing the merged view. */
@@ -247,7 +299,9 @@ function applyDelta(base: PhpToolkitMetrics, delta: MetricsDelta): PhpToolkitMet
  *
  * Writes merge pending increments into the latest stored document rather than
  * overwriting it, so two sessions on the same project do not lose each
- * other's counts.
+ * other's counts. init/flush/reset run one at a time per store; across
+ * processes, writes that overlap are last-writer-wins (the storage backend
+ * has no compare-and-swap).
  */
 export class MetricsStore {
   private base: PhpToolkitMetrics;
@@ -259,6 +313,8 @@ export class MetricsStore {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private retries = 0;
   private reportedFailure = false;
+  /** Tail of the operation chain; every state-mutating operation waits on it. */
+  private queue: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly storage: MetricsStorage,
@@ -266,6 +322,20 @@ export class MetricsStore {
   ) {
     this.base = initialMetrics(project);
     this.key = storageKeyFor(project.path);
+  }
+
+  /**
+   * Runs `op` after every previously enqueued operation on this store has
+   * settled (successfully or not). init/flush/reset are serialized this way,
+   * so a reset can never interleave with a flush mid-write.
+   */
+  private enqueue<T>(op: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(op, op);
+    this.queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   /** Storage key this store owns. */
@@ -286,6 +356,10 @@ export class MetricsStore {
    * a failed read can never erase the history that is still on disk.
    */
   async init(): Promise<void> {
+    return this.enqueue(() => this.initNow());
+  }
+
+  private async initNow(): Promise<void> {
     let raw: unknown;
     try {
       raw = await this.storage.get(this.key);
@@ -354,9 +428,22 @@ export class MetricsStore {
    *
    * Writes are coalesced, so a burst of tool calls costs a single storage
    * write. The write merges the pending increments into the document that is
-   * on disk right now, so a concurrent session's counts are not lost.
+   * on disk right now, so a concurrent session's counts are not lost. When
+   * the document cannot be re-read, or is from a newer format, the write is
+   * skipped instead of overwriting counts this session cannot see; anything
+   * recorded in the meantime stays pending.
+   *
+   * Operations are serialized per store (see `enqueue`), so a reset cannot
+   * interleave with a flush. Concurrent OpenCode *processes* still merge on
+   * read: writes that land between the read and the write of another process
+   * are last-writer-wins, because the storage backend offers no compare-and-
+   * swap.
    */
   async flush(): Promise<void> {
+    return this.enqueue(() => this.flushNow());
+  }
+
+  private async flushNow(): Promise<void> {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
@@ -375,16 +462,32 @@ export class MetricsStore {
 
     const pending = this.delta;
     this.delta = emptyDelta();
+    // Read the latest document first so a concurrent writer's counts survive.
+    // If the document cannot be read — or belongs to a newer format — the
+    // write is skipped rather than overwriting counts we cannot see.
+    let latest: PhpToolkitMetrics;
     try {
-      // Read the latest document first so a concurrent writer's counts survive.
-      let latest: PhpToolkitMetrics = this.base;
-      try {
-        const raw = await this.storage.get(this.key);
-        const loaded = deserialize(raw, this.project);
-        if (loaded.supported) latest = loaded.metrics;
-      } catch {
-        // Fall back to our own base document.
+      const raw = await this.storage.get(this.key);
+      const loaded = deserialize(raw, this.project);
+      if (!loaded.supported) {
+        // A newer format owns this document - do not overwrite it. Same rule
+        // as init(): this store refuses to write what it cannot read.
+        this.writable = false;
+        this.reportFailure(
+          "metrics write skipped: stored document is from a newer format; this session is read-only for the rest of its lifetime",
+        );
+        this.delta = mergeDelta(pending, this.delta);
+        return;
       }
+      latest = loaded.metrics;
+    } catch {
+      // Could not confirm the latest document - keep everything pending and
+      // retry later instead of overwriting counts we cannot see.
+      this.delta = mergeDelta(pending, this.delta);
+      this.scheduleRetry();
+      return;
+    }
+    try {
       const merged = applyDelta(latest, pending);
       await this.storage.set(this.key, merged);
       this.base = merged;
@@ -392,8 +495,9 @@ export class MetricsStore {
       this.retries = 0;
       this.reportedFailure = false;
     } catch {
-      // Keep the change pending so the next flush retries it.
-      this.delta = pending;
+      // Keep the change pending so the next flush retries it. Increments
+      // recorded while this flush was in flight survive the retry too.
+      this.delta = mergeDelta(pending, this.delta);
       this.scheduleRetry();
     }
   }
@@ -451,6 +555,46 @@ export class MetricsStore {
     } catch {
       // No legacy document, or it cannot be read - nothing to migrate.
     }
+  }
+
+  /**
+   * Clears this project's persisted document and starts over with an empty
+   * one. Pending increments are discarded too - this is a full wipe, used by
+   * `php_metrics` when the user explicitly asks for it.
+   *
+   * An empty document is written (not the key removed) so the legacy
+   * machine-global document can never be re-adopted for this project on the
+   * next startup. The reset runs after any in-flight flush (see `enqueue`),
+   * so a pre-reset write cannot land after the wipe; a concurrent *process*
+   * can still write pre-reset counts in a narrow window - run the reset
+   * again if that matters.
+   */
+  async reset(): Promise<boolean> {
+    return this.enqueue(() => this.resetNow());
+  }
+
+  private async resetNow(): Promise<boolean> {
+    try {
+      await this.storage.set(this.key, initialMetrics(this.project));
+    } catch {
+      return false;
+    }
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    this.base = initialMetrics(this.project);
+    this.delta = emptyDelta();
+    this.wrote = true;
+    this.retries = 0;
+    this.writable = true;
+    // A failed write before the reset must not silence the next failure log.
+    this.reportedFailure = false;
+    return true;
   }
 
   private markDirty(): void {

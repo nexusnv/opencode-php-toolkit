@@ -3,8 +3,10 @@ import {
   LEGACY_STORAGE_KEY,
   MetricsStore,
   deserialize,
+  mergeDelta,
   projectKey,
   storageKeyFor,
+  type MetricsDelta,
   type MetricsStorage,
 } from "../src/metrics/store.js";
 
@@ -277,6 +279,83 @@ describe("MetricsStore", () => {
     expect((data.get(key) as { version: number }).version).toBe(99);
   });
 
+  it("keeps increments recorded while a flush was in flight when the write fails", async () => {
+    const { storage, set } = fakeStorage();
+    const silenced = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const store = new MetricsStore(storage, PROJECT);
+      await store.init();
+
+      set.mockRejectedValueOnce(new Error("read-only filesystem"));
+      await store.recordTool({ tool: "php_lint", status: "ok" });
+      // Not awaited: the tool records another run while flush() re-reads storage.
+      const flushPromise = store.flush();
+      await store.recordTool({ tool: "php_composer_audit", status: "ok" });
+      await flushPromise;
+
+      const tools = store.getSnapshot().tools;
+      expect(tools.php_lint?.runs).toBe(1);
+      expect(tools.php_composer_audit?.runs).toBe(1);
+    } finally {
+      silenced.mockRestore();
+    }
+  });
+
+  it("does not overwrite a document a newer format adopted after init", async () => {
+    const key = storageKeyFor(PROJECT.path);
+    const { storage, set, data } = fakeStorage({
+      [key]: { version: 2, triggerHits: 5, tools: {}, commands: {} },
+    });
+    const silenced = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const store = new MetricsStore(storage, PROJECT);
+      await store.init();
+
+      // A newer toolkit rewrites the document after this session loaded it.
+      data.set(key, { version: 99, triggerHits: 42, tools: {}, commands: {} });
+
+      await store.recordTrigger();
+      await store.flush();
+
+      expect(set).not.toHaveBeenCalled();
+      expect((data.get(key) as { version: number }).version).toBe(99);
+      expect((data.get(key) as { triggerHits: number }).triggerHits).toBe(42);
+      // The session is read-only from now on, but its snapshot still shows
+      // its own pending work.
+      expect(store.canWrite).toBe(false);
+      expect(store.getSnapshot().triggerHits).toBe(6);
+    } finally {
+      silenced.mockRestore();
+    }
+  });
+
+  it("retries instead of overwriting when the document cannot be re-read mid-flush", async () => {
+    const key = storageKeyFor(PROJECT.path);
+    const { storage, set, data } = fakeStorage({
+      [key]: { version: 2, triggerHits: 9, tools: {}, commands: {} },
+    });
+    const silenced = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const store = new MetricsStore(storage, PROJECT);
+      await store.init();
+      storage.get = async () => {
+        throw new Error("disk on fire");
+      };
+
+      await store.recordTrigger();
+      await store.flush();
+
+      expect(set).not.toHaveBeenCalled();
+      expect((data.get(key) as { triggerHits: number }).triggerHits).toBe(9);
+      // A transient read failure is retryable: the session stays writable and
+      // its snapshot still counts its own pending increment.
+      expect(store.canWrite).toBe(true);
+      expect(store.getSnapshot().triggerHits).toBe(10);
+    } finally {
+      silenced.mockRestore();
+    }
+  });
+
   it("merges concurrent updates instead of overwriting them", async () => {
     const { storage, data } = fakeStorage();
     const first = new MetricsStore(storage, PROJECT);
@@ -397,5 +476,148 @@ describe("MetricsStore", () => {
     const result = await store.listOtherProjects();
     expect(result.truncated).toBe(false);
     expect(result.projects.length).toBe(450);
+  });
+
+  it("clears the persisted document and starts over on reset", async () => {
+    const key = storageKeyFor(PROJECT.path);
+    const { storage, data, set } = fakeStorage({
+      [key]: { version: 2, triggerHits: 7, tools: {}, commands: {} },
+    });
+    const store = new MetricsStore(storage, PROJECT);
+    await store.init();
+
+    await store.recordTrigger();
+    const ok = await store.reset();
+    expect(ok).toBe(true);
+    expect(set).toHaveBeenCalledWith(key, expect.objectContaining({ version: 2, triggerHits: 0 }));
+    expect((data.get(key) as { triggerHits: number }).triggerHits).toBe(0);
+    expect(store.getSnapshot().triggerHits).toBe(0);
+
+    // Tracking restarts cleanly after the wipe.
+    await store.recordTrigger();
+    await store.flush();
+    expect((data.get(key) as { triggerHits: number }).triggerHits).toBe(1);
+  });
+
+  it("clears to an empty document on reset, so legacy history cannot be re-adopted", async () => {
+    const key = storageKeyFor(PROJECT.path);
+    const { storage, data } = fakeStorage({
+      [key]: { version: 2, triggerHits: 7, tools: {}, commands: {} },
+    });
+    const store = new MetricsStore(storage, PROJECT);
+    await store.init();
+
+    const ok = await store.reset();
+    expect(ok).toBe(true);
+    // The key stays present with an empty document: a fresh init() must not
+    // see a missing document and re-adopt the machine-global legacy history.
+    expect((data.get(key) as { triggerHits: number }).triggerHits).toBe(0);
+    expect(store.getSnapshot().triggerHits).toBe(0);
+
+    // A reloaded store sees the empty document instead of adopting legacy.
+    const reloaded = new MetricsStore(storage, PROJECT);
+    await reloaded.init();
+    expect(reloaded.getSnapshot().triggerHits).toBe(0);
+  });
+
+  it("runs a reset after an in-flight flush settles, so old counts cannot come back", async () => {
+    const key = storageKeyFor(PROJECT.path);
+    const { storage, data, set } = fakeStorage({
+      [key]: { version: 2, triggerHits: 9, tools: {}, commands: {} },
+    });
+    const store = new MetricsStore(storage, PROJECT);
+    await store.init();
+
+    // Hold the flush's write so it is still in flight when reset is called.
+    let releaseSet: (() => void) | undefined;
+    set.mockImplementationOnce(
+      (k, v) =>
+        new Promise<void>((resolve) => {
+          releaseSet = () => {
+            data.set(k, v);
+            resolve();
+          };
+        }),
+    );
+
+    await store.recordTrigger();
+    const flushPromise = store.flush();
+    const resetPromise = store.reset(); // serialized behind the flush
+    await vi.waitFor(() => expect(releaseSet).toBeDefined());
+    releaseSet?.();
+    await Promise.all([flushPromise, resetPromise]);
+
+    // The flush's write landed first; the reset then overwrote it with an
+    // empty document, so no pre-reset counts survive.
+    expect((data.get(key) as { triggerHits: number }).triggerHits).toBe(0);
+    expect(store.getSnapshot().triggerHits).toBe(0);
+  });
+
+  it("drops pending increments when the write fails and a reset follows", async () => {
+    const key = storageKeyFor(PROJECT.path);
+    const { storage, data, set } = fakeStorage({
+      [key]: { version: 2, triggerHits: 9, tools: {}, commands: {} },
+    });
+    const silenced = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const store = new MetricsStore(storage, PROJECT);
+      await store.init();
+
+      set.mockRejectedValueOnce(new Error("read-only"));
+      await store.recordTrigger();
+      await store.flush(); // write fails; increments stay pending
+
+      await store.reset(); // clears pending state and writes an empty document
+
+      // The retry must not resurrect the pre-reset increment.
+      await store.flush();
+      expect((data.get(key) as { triggerHits: number }).triggerHits).toBe(0);
+    } finally {
+      silenced.mockRestore();
+    }
+  });
+
+  it("logs storage failures again after a reset clears an earlier one", async () => {
+    const { storage, set } = fakeStorage();
+    const silenced = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const store = new MetricsStore(storage, PROJECT);
+      await store.init();
+
+      set.mockRejectedValueOnce(new Error("read-only"));
+      await store.recordTrigger();
+      await store.flush();
+      expect(silenced).toHaveBeenCalledTimes(1);
+
+      await store.reset();
+      set.mockRejectedValueOnce(new Error("read-only again"));
+      await store.recordTrigger();
+      await store.flush();
+      expect(silenced).toHaveBeenCalledTimes(2);
+    } finally {
+      silenced.mockRestore();
+    }
+  });
+});
+
+describe("mergeDelta", () => {
+  it("keeps every increment and prefers the newer delta's status on a timestamp tie", () => {
+    const entry = (runs: number, ok: number, status: "ok" | "error") => ({
+      runs,
+      ok,
+      error: runs - ok,
+      findings: 0,
+      lastUsedAt: "2026-01-01T00:00:00.000Z",
+      lastStatus: status,
+    });
+    const delta = (tool: { runs: number; ok: number; status: "ok" | "error" }): MetricsDelta => ({
+      tools: { php_lint: entry(tool.runs, tool.ok, tool.status) },
+      commands: {},
+      triggerHits: 1,
+    });
+
+    const merged = mergeDelta(delta({ runs: 1, ok: 1, status: "ok" }), delta({ runs: 2, ok: 0, status: "error" }));
+    expect(merged.tools.php_lint).toMatchObject({ runs: 3, ok: 1, error: 2, lastStatus: "error" });
+    expect(merged.triggerHits).toBe(2);
   });
 });

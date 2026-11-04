@@ -52,12 +52,10 @@ function projectLines(scan, current) {
         current: p.current,
     }))
         .sort((a, b) => Number(b.current) - Number(a.current) || b.runs - a.runs);
-    if (!rows.length)
-        return ["    (no other project has been tracked yet)"];
-    const width = Math.max(...rows.map((r) => r.name.length));
-    const lines = rows.map((r) => {
-        const label = r.current ? `${r.name} (this project)` : r.name;
-        return `    ${pad(label, width)}  ${pad(`${r.runs} runs`, 10)}  ${pad(plural(r.findings, "finding"), 11)}  ${plural(r.prompts, "prompt")}`;
+    const labels = rows.map((r) => (r.current ? `${r.name} (this project)` : r.name));
+    const width = Math.max(...labels.map((label) => label.length));
+    const lines = rows.map((r, i) => {
+        return `    ${pad(labels[i], width)}  ${pad(`${r.runs} runs`, 10)}  ${pad(plural(r.findings, "finding"), 11)}  ${plural(r.prompts, "prompt")}`;
     });
     const totalRunsAll = rows.reduce((sum, r) => sum + r.runs, 0);
     const totalFindingsAll = rows.reduce((sum, r) => sum + r.findings, 0);

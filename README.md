@@ -1,5 +1,7 @@
 # opencode-php-toolkit
 
+[![CI](https://github.com/nexusnv/opencode-php-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/nexusnv/opencode-php-toolkit/actions/workflows/ci.yml)
+
 Framework-agnostic PHP toolkit for OpenCode v2. Hard-to-miss defaults for PHP 8.1+ developers: review, static analysis, tests, security, modernize, composer, architecture, debug.
 
 Laravel/Symfony specifics live in sibling repos (`opencode-laravel-toolkit`, `opencode-symfony-toolkit`). This package never assumes a framework — it detects and defers.
@@ -17,6 +19,13 @@ Published package (after `npm publish`):
   "plugins": ["opencode-php-toolkit@0.1.1"]
 }
 ```
+
+> On install, the package copies the four `agents/php-*.md` files into
+> `~/.config/opencode/agents/` as a convenience (see below). Existing files
+> are never overwritten — a customized agent keeps its content across
+> installs and upgrades; delete the file to get the bundled version back.
+> Set `PHP_TOOLKIT_SKIP_AGENT_COPY=1` before installing to skip that copy;
+> the rest of the plugin is unaffected.
 
 From git (no npm publish needed — `dist/` is committed, so clones work
 as-is; always run `npm run build` before committing):
@@ -61,11 +70,18 @@ opencode plugin add file:///home/leonidas/dev/nexusnv/opencode-php-toolkit
 
 ## What you get
 
-- Agents (`agents/php-*.md`, `mode: subagent`): `php-reviewer`, `php-debugger`, `php-modernizer`, `php-tester`. Copied to `~/.config/opencode/agents/` on install as convenience (v2 `AgentEditor` has no `add`; transforms can't create agents — files are the source of truth).
+- Agents (`agents/php-*.md`, `mode: subagent`): `php-reviewer`, `php-debugger`, `php-modernizer`, `php-tester`. On install, the package's `postinstall` script copies these four files into `~/.config/opencode/agents/` as a convenience, never overwriting files that already exist (v2 `AgentEditor` has no `add`; transforms can't create agents — files are the source of truth). Set `PHP_TOOLKIT_SKIP_AGENT_COPY=1` in the environment to opt out. The script writes nothing besides those four files (the OpenCode `commands/` directory is not touched). To undo after install, delete `php-reviewer.md`, `php-debugger.md`, `php-modernizer.md` and `php-tester.md` from `~/.config/opencode/agents/`.
 - Skills (8, autoinvoke): `php-standards`, `php-static-analysis`, `php-testing`, `php-security`, `php-modernize`, `php-composer`, `php-architecture`, `php-debug`.
 - Commands (7): `/php-review`, `/php-analyze`, `/php-fix-style`, `/php-test`, `/php-audit`, `/php-upgrade`, `/php-scaffold`.
-- Tools (`php_*` namespace, read-only): `php_project_detect`, `php_lint`, `php_composer_audit`, `php_metrics`.
-- Hooks: `prompt` tags PHP context, `context` adds typed-PHP system hint, `tool.execute.before` warns on destructive `composer update` / `rector process` without `--dry-run` / `php-cs-fixer fix` without `--dry-run`.
+- Tools (`php_*` namespace, read-only unless noted):
+  - `php_project_detect` — composer intel incl. analyzer/fixer config files and `composer config.platform.php`; no exec
+  - `php_lint` — `php -l` + `composer validate`
+  - `php_composer_audit` — known-vulnerable dependencies (network)
+  - `php_composer_outdated` — direct deps with a newer version (network; the repositories configured in the project's `composer.json` determine which hosts Composer contacts)
+  - `php_static_analysis` — PHPStan (or Psalm when absent), JSON output; analysis errors count as findings; **executes project-configured code** (analyzer binaries run bootstrap files, autoload and Psalm plugins with this session's privileges)
+  - `php_test` — runs `vendor/bin/pest` or `vendor/bin/phpunit` against JUnit output; **executes project code** (tests only, 300s timeout, never a bare PATH binary)
+  - `php_metrics` — local usage metrics; `reset: true` clears this project's metrics, `export: true` dumps the snapshot as raw JSON (absolute project path omitted)
+- Hooks: `prompt` tags PHP context, `context` adds typed-PHP system hint (only when the project has a `composer.json` or the request's user messages mention PHP — no tokens spent on unrelated sessions), `tool.execute.before` warns on destructive `composer update` / `rector process` without `--dry-run` / `php-cs-fixer fix` without `--dry-run`.
 
 ## Local metrics
 
@@ -101,6 +117,14 @@ PHP toolkit metrics (local-only, never leaves this machine)
   numbers never absorb another's. Pass `allProjects: true` to `php_metrics`
   for the machine-wide breakdown. That view is eventually consistent: a
   session running elsewhere may still have unsaved events.
+  `php_metrics` also accepts `reset: true` to clear this project's metrics
+  (immediate, no undo — the document is replaced with an empty one, which
+  also prevents machine-global legacy history from being re-adopted here) and
+  `export: true` to return the snapshot as raw JSON instead of the rendered
+  view (export reflects the state before any `reset` is applied; the
+  absolute `projectPath` is omitted so the export keeps the rendered view's
+  no-absolute-paths promise; combined with `reset`, the JSON is followed by
+  the reset confirmation).
 
 ### Privacy
 
@@ -114,10 +138,17 @@ Metrics themselves never leave your machine:
 
 Two things worth knowing precisely:
 
-- **`php_composer_audit` does reach the network.** It runs `composer audit`,
-  which contacts the Composer advisory service to look up known
-  vulnerabilities. That request is made by Composer, on your behalf, when you
-  ask for the audit — the plugin does not transmit anything itself.
+- **`php_composer_audit` and `php_composer_outdated` reach the network.**
+  They run
+  `composer audit` / `composer outdated`, which contact the repositories
+  configured in the project's `composer.json` (Packagist by default) to look
+  up known vulnerabilities and newer releases. That request is made by
+  Composer, on your behalf, when you ask for it — the plugin does not
+  transmit anything itself, and a project pointing Composer at other hosts
+  determines where the requests go.
+- **`php_test` executes project code.** It runs the project's own test suite
+  (vendor binary only, explicit working directory, 300s timeout) — treat it
+  like running `vendor/bin/phpunit` yourself.
 - **The snapshot is tool output.** `php_metrics` returns the snapshot as tool
   content, so with a remote model provider it is included in that request.
   The snapshot therefore contains no absolute paths, no file names and no
@@ -142,6 +173,12 @@ php -l fixtures/php-sample/src/Calculator.php
 > runs on Node >= 20. The tests use fake `php` and `composer` executables, so
 > they do not need PHP or Composer installed.
 
+CI runs the same checks on every push to `main` and on pull requests
+(Node 22/24 with a `dist/`-drift check — any change to `src/` must ship with
+the rebuilt `dist/` in the same commit — plus a Node 20 compat job that skips
+the suite). See [CHANGELOG.md](./CHANGELOG.md) for what changed between
+releases.
+
 ## Layout
 
 ```
@@ -151,7 +188,7 @@ index.js — package entrypoint shim (required: OpenCode loads a plugin
 src/index.ts — Plugin.define entry
 src/content.ts — markdown loader + skill/command manifests
 src/tools/detect.ts — composer.json intel, no exec
-src/tools/php-tools.ts — php -l, composer validate/audit (read-only, timeouts, AbortSignal); each returns its own outcome + findings
+src/tools/php-tools.ts — php -l, composer validate/audit/outdated, static analysis (phpstan/psalm), test runner (phpunit/pest); timeouts + AbortSignal throughout; each returns its own outcome + findings
 src/hooks/php-context.ts — system hint, triggers, destructive-pattern guard
 src/metrics/store.ts — per-project metrics document (storage, migration, merged writes)
 src/metrics/registry.ts — one document per project, work attributed to the right one
