@@ -16,35 +16,36 @@ function tryRealpath(path: string): string {
  * A tool may be pointed at a directory other than the active project root.
  * Work inside the active project stays with that project; work outside it
  * belongs to the directory it was actually run against, so one project's
- * snapshot never absorbs another project's numbers.
- */
-/**
- * Work inside the active project root resolves against that root. Paths
- * outside it (or symlinks pointing out of it) are attributed to their
- * canonical location, so the same directory is never tracked under two
- * spellings and a symlink out of the project cannot absorb another
- * project's numbers. Paths that do not exist yet compare textually.
+ * snapshot never absorbs another project's numbers. The result is always the
+ * canonical (realpath'd) location, so two sessions that opened the same
+ * project through different spellings share one metrics document, and a
+ * symlink out of the project cannot absorb another project's numbers. Paths
+ * that do not exist yet compare textually.
  */
 export function resolveProjectScope(activeRoot: string, target?: string): string {
-  if (!target) return activeRoot;
   const active = tryRealpath(activeRoot);
+  if (!target) return active;
   const absolute = tryRealpath(resolve(active, target));
-  if (absolute === active) return activeRoot;
-  if (absolute.startsWith(active + sep)) return activeRoot;
+  if (absolute === active || absolute.startsWith(active + sep)) return active;
   return absolute;
 }
 
 /**
  * Keeps one metrics document per project, so work is attributed to the
- * project it was actually done in.
+ * project it was actually done in. The active project is keyed by its
+ * canonical path, keeping sessions that opened it through a symlink and
+ * sessions that opened it directly on the same document.
  */
 export class MetricsRegistry {
   private readonly stores = new Map<string, MetricsStore>();
+  private readonly activeProject: MetricsProject;
 
   constructor(
     private readonly storage: MetricsStorage,
-    private readonly activeProject: MetricsProject,
-  ) {}
+    activeProject: MetricsProject,
+  ) {
+    this.activeProject = { name: activeProject.name, path: tryRealpath(activeProject.path) };
+  }
 
   /** The store for the project the plugin was loaded in. */
   get active(): MetricsStore {
@@ -73,7 +74,7 @@ export class MetricsRegistry {
     await Promise.all([...this.stores.values()].map((store) => store.flush().catch(() => {})));
   }
 
-  /** Deletes the active project's persisted document and starts over. */
+  /** Clears the active project's metrics document and starts over. */
   async resetActive(): Promise<boolean> {
     return this.active.reset();
   }

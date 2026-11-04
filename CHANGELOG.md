@@ -35,15 +35,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Metrics: `flush()` refuses to overwrite a document written by a newer
   format, and retries instead of overwriting when the document cannot be
   re-read — neither case destroys counts any more.
-- Tools: `php_test` failure lines point at the failing test's own file/line
-  (a passing self-closing testcase earlier in the JUnit report stole the
-  attribution), and failure messages decode numeric XML entities (`&#10;`)
-  so multi-line messages render their first line instead of the escape.
-- Tools: PHPStan's fallback count (when `totals.errors` is missing) counts
-  every message instead of stopping at the 20-line display cap.
-- Metrics: `reset()` rolls back a flush write that was still in flight during
-  the wipe instead of letting it resurrect the deleted document, and a write
-  failure before a reset no longer silences the log for later failures.
+- `php_static_analysis` counts file-specific PHPStan errors: `totals.errors`
+  only covers errors not tied to a file, `totals.file_errors` carries the
+  rest — a typical run reported 0 findings before. JSON without report
+  fields on a failing exit is now an analyzer error, not a clean run.
+- `php_test` failure lines point at the failing test's own file/line (a
+  passing self-closing testcase earlier in the JUnit report stole the
+  attribution), failure messages decode numeric XML entities (`&#10;`) so
+  multi-line messages render their first line instead of the escape, and an
+  exit-0 run without a JUnit report no longer claims tests passed.
+- PHPStan's fallback count (when `totals` is missing) counts every message
+  instead of stopping at the 20-line display cap.
+- Tools resolve the requested `directory` once, so a relative path can no
+  longer make the tool run in one directory and record its metrics in
+  another (or double-resolve vendor binary paths).
+- An already-aborted signal now prevents the child process from spawning
+  instead of running to its timeout; report output above the old 1 MiB
+  capture limit no longer truncates into tool errors.
+- Metrics: init/flush/reset are serialized per store, so a reset can no
+  longer interleave with an in-flight flush and old counts cannot come back
+  after the wipe. Reset writes an empty document instead of deleting the
+  key, so machine-global legacy history is not re-adopted on next startup.
+  Metrics are keyed by the canonical project path, so a session that opened
+  the project through a symlink and one that opened it directly share one
+  document. Concurrent same-millisecond merges keep the newer status.
+- Metrics: `export: true` returns raw JSON (no prose prefix) and omits the
+  absolute `projectPath`, matching the rendered view's privacy promise.
+- Metrics: a write failure before a `reset` no longer silences the log for
+  later failures.
+- `php_project_detect` reports the lock file and analyzer/fixer configs even
+  when `composer.json` is malformed (the probes no longer run after the
+  early return).
+- The typed-PHP system hint triggers on clear PHP mentions only ("pest" and
+  "psalm" alone no longer qualify) and scans message text in full.
+- The `composer.json` check for the system hint runs per request, so a
+  manifest created mid-session is picked up without a plugin reload.
+- `postinstall.mjs` resolves the package path with `fileURLToPath` (installs
+  under paths with spaces or on Windows) and never overwrites an existing
+  agent file, so customized agents survive upgrades.
+- CI: `persist-credentials: false` on both checkouts, and the `dist/` drift
+  check stages the directory first so never-committed build outputs fail it.
 - Skills: the registered `path` now points inside the package (it pointed at
   the active project root, where the file never existed).
 - Tools: `composer audit` no-lock prose output ("No packages - skipping

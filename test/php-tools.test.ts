@@ -1,6 +1,6 @@
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   composerAudit,
@@ -260,9 +260,11 @@ describe("composerAudit", () => {
   });
 });
 
+// Real phpstan shape: totals.errors counts errors NOT tied to a file; the
+// per-file errors are counted in totals.file_errors.
 const FAKE_PHPSTAN = `#!/bin/sh
 cat <<'JSON'
-{"totals":{"errors":2,"file_errors":2},"files":{"src/Calculator.php":{"errors":1,"messages":[{"message":"Parameter #1 $a of add expects int, string given.","line":12,"ignorable":false}]},"src/Other.php":{"errors":1,"messages":[{"message":"Method Other::bar() should return int.","line":30,"ignorable":false}]}}}
+{"totals":{"errors":0,"file_errors":2},"files":{"src/Calculator.php":{"errors":1,"messages":[{"message":"Parameter #1 $a of add expects int, string given.","line":12,"ignorable":false}]},"src/Other.php":{"errors":1,"messages":[{"message":"Method Other::bar() should return int.","line":30,"ignorable":false}]}}}
 JSON
 exit 1
 `;
@@ -307,6 +309,11 @@ exit 0
 const FAKE_PHPUNIT_BROKEN = `#!/bin/sh
 echo "PHPUnit 10.x - Fatal: configuration file not found"
 exit 2
+`;
+
+const FAKE_PHPUNIT_NO_TESTS = `#!/bin/sh
+echo "No tests executed!"
+exit 0
 `;
 
 describe("phpStaticAnalysis", () => {
@@ -382,6 +389,36 @@ describe("phpTest", () => {
     expect(outcome.status).toBe("error");
     expect(outcome.text).toContain("never run from a bare PATH binary");
   });
+
+  it("does not spawn the runner when the signal is already aborted", async () => {
+    const dir = workspace({ "vendor/bin/phpunit": FAKE_PHPUNIT_CLEAN });
+    const controller = new AbortController();
+    controller.abort();
+    const outcome = await phpTest(dir, controller.signal);
+    expect(outcome.status).toBe("error");
+    expect(outcome.text).toContain("timed out or was aborted");
+  });
+
+  it("does not claim a passing suite when exit 0 produced no JUnit report", async () => {
+    const dir = workspace({ "vendor/bin/phpunit": FAKE_PHPUNIT_NO_TESTS });
+    const outcome = await phpTest(dir);
+    expect(outcome.status).toBe("ok");
+    expect(outcome.findings).toBe(0);
+    expect(outcome.text).toContain("cannot confirm tests actually ran");
+  });
+
+  it("resolves a relative directory against the process working directory", async () => {
+    const dir = workspace({ "vendor/bin/phpunit": FAKE_PHPUNIT_CLEAN });
+    const prevCwd = process.cwd();
+    process.chdir(dirname(dir));
+    try {
+      const outcome = await phpTest(basename(dir));
+      expect(outcome.status).toBe("ok");
+      expect(outcome.findings).toBe(0);
+    } finally {
+      process.chdir(prevCwd);
+    }
+  });
 });
 
 describe("composerOutdated", () => {
@@ -402,12 +439,30 @@ describe("composerOutdated", () => {
 });
 
 describe("parsers", () => {
-  it("parses phpstan JSON with a totals count", () => {
+  it("parses phpstan JSON: file errors come from totals.file_errors, not totals.errors", () => {
     const json = JSON.stringify({
-      totals: { errors: 2 },
-      files: { "src/A.php": { messages: [{ message: "be careful", line: 7 }] } },
+      totals: { errors: 1, file_errors: 2 },
+      files: {
+        "src/A.php": { messages: [{ message: "be careful", line: 7 }, { message: "watch out", line: 9 }] },
+      },
     });
-    expect(parsePhpStanReport(json)).toEqual({ findings: 2, lines: ["src/A.php:7 be careful"] });
+    expect(parsePhpStanReport(json)).toEqual({
+      findings: 3,
+      lines: ["src/A.php:7 be careful", "src/A.php:9 watch out"],
+    });
+  });
+
+  it("falls back to the message count when totals.file_errors is absent", () => {
+    const json = JSON.stringify({
+      totals: { errors: 1 },
+      files: { "src/A.php": { messages: [{ message: "a", line: 1 }, { message: "b", line: 2 }] } },
+    });
+    expect(parsePhpStanReport(json)?.findings).toBe(3);
+  });
+
+  it("rejects JSON objects that carry no phpstan report fields", () => {
+    expect(parsePhpStanReport("{}")).toBeNull();
+    expect(parsePhpStanReport(JSON.stringify({ unrelated: true }))).toBeNull();
   });
 
   it("parses psalm JSON issue arrays", () => {

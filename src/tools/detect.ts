@@ -74,6 +74,28 @@ export async function detectPhpProject(directory: string): Promise<PhpProjectInf
     laravelHint: false,
     symfonyHint: false,
   };
+  // File-existence probes are independent of the manifest. They run first so
+  // a malformed composer.json (which returns early) still reports the lock
+  // file and analyzer/fixer configs that are actually present.
+  try {
+    // Existence is all we need - readFile would copy the whole lock into memory.
+    await access(join(directory, "composer.lock"));
+    empty.hasComposerLock = true;
+  } catch {
+    // no lock
+  }
+  // Static analysis/fixer configs are common signals - cheap to probe in parallel.
+  const present = await Promise.all(
+    CONFIG_FILES.map(async (name) => {
+      try {
+        await access(join(directory, name));
+        return name;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  empty.configs = present.filter((name) => name !== null);
   try {
     const raw = await readFile(join(directory, "composer.json"), "utf8");
     let composer: {
@@ -123,25 +145,6 @@ export async function detectPhpProject(directory: string): Promise<PhpProjectInf
   } catch {
     // no composer.json — stay framework-agnostic, report empty
   }
-  try {
-    // Existence is all we need - readFile would copy the whole lock into memory.
-    await access(join(directory, "composer.lock"));
-    empty.hasComposerLock = true;
-  } catch {
-    // no lock
-  }
-  // Static analysis/fixer configs are common signals - cheap to probe in parallel.
-  const present = await Promise.all(
-    CONFIG_FILES.map(async (name) => {
-      try {
-        await access(join(directory, name));
-        return name;
-      } catch {
-        return null;
-      }
-    }),
-  );
-  empty.configs = present.filter((name) => name !== null);
   return empty;
 }
 

@@ -72,4 +72,17 @@ describe("detectPhpProject", () => {
     expect(info.composerJsonError).not.toBeNull();
     expect(formatDetection(info)).toContain("MALFORMED");
   });
+
+  it("still reports the lock file and configs when the manifest is malformed", async () => {
+    const dir = workspace({
+      "composer.json": "{ this is not json",
+      "composer.lock": "{}",
+      "phpstan.neon": "parameters:\n  level: 8\n",
+    });
+    const info = await detectPhpProject(dir);
+    expect(info.composerJsonError).not.toBeNull();
+    expect(info.hasComposerLock).toBe(true);
+    expect(info.configs).toContain("phpstan.neon");
+    expect(formatDetection(info)).toContain("phpstan.neon");
+  });
 });

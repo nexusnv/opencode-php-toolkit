@@ -5,11 +5,11 @@ export const PHP_SYSTEM_HINT = "Prefer typed, framework-agnostic PHP 8.1+. " +
     "Composer: validate before audit/outdated; never commit without lock check.";
 export const PHP_TRIGGER = /(php|composer|phpunit|pest|phpstan|psalm|rector|cs-fixer|phpcs|mago|xdebug)/i;
 /**
- * Minimal, structural view of a chat message - the v2 SessionContext's
- * `messages` is assignable to this, without this module importing the AI
- * schema. Text parts longer than this are not fully scanned.
+ * The trigger for injecting the PHP system hint. Deliberately narrower than
+ * PHP_TRIGGER: "pest" and "psalm" are ordinary English/Latin words, and the
+ * hint is only added on a clear PHP mention.
  */
-const MAX_TEXT_SCAN = 8000;
+export const PHP_HINT_TRIGGER = /(php|composer|phpunit|phpstan|cs-fixer|phpcs|mago|xdebug)/i;
 /** True when a user message in this request mentions the PHP ecosystem. */
 export function mentionsPhp(messages) {
     if (!Array.isArray(messages))
@@ -26,7 +26,7 @@ export function mentionsPhp(messages) {
                 continue;
             const text = part.text;
             if (part.type === "text" && typeof text === "string") {
-                if (PHP_TRIGGER.test(text.slice(0, MAX_TEXT_SCAN)))
+                if (PHP_HINT_TRIGGER.test(text))
                     return true;
             }
         }

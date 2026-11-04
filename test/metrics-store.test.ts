@@ -3,8 +3,10 @@ import {
   LEGACY_STORAGE_KEY,
   MetricsStore,
   deserialize,
+  mergeDelta,
   projectKey,
   storageKeyFor,
+  type MetricsDelta,
   type MetricsStorage,
 } from "../src/metrics/store.js";
 
@@ -476,9 +478,9 @@ describe("MetricsStore", () => {
     expect(result.projects.length).toBe(450);
   });
 
-  it("wipes the persisted document and starts over on reset", async () => {
+  it("clears the persisted document and starts over on reset", async () => {
     const key = storageKeyFor(PROJECT.path);
-    const { storage, data, remove } = fakeStorage({
+    const { storage, data, set } = fakeStorage({
       [key]: { version: 2, triggerHits: 7, tools: {}, commands: {} },
     });
     const store = new MetricsStore(storage, PROJECT);
@@ -487,8 +489,8 @@ describe("MetricsStore", () => {
     await store.recordTrigger();
     const ok = await store.reset();
     expect(ok).toBe(true);
-    expect(remove).toHaveBeenCalledWith(key);
-    expect(data.has(key)).toBe(false);
+    expect(set).toHaveBeenCalledWith(key, expect.objectContaining({ version: 2, triggerHits: 0 }));
+    expect((data.get(key) as { triggerHits: number }).triggerHits).toBe(0);
     expect(store.getSnapshot().triggerHits).toBe(0);
 
     // Tracking restarts cleanly after the wipe.
@@ -497,7 +499,28 @@ describe("MetricsStore", () => {
     expect((data.get(key) as { triggerHits: number }).triggerHits).toBe(1);
   });
 
-  it("undoes a write that raced a reset instead of resurrecting the wiped document", async () => {
+  it("clears to an empty document on reset, so legacy history cannot be re-adopted", async () => {
+    const key = storageKeyFor(PROJECT.path);
+    const { storage, data } = fakeStorage({
+      [key]: { version: 2, triggerHits: 7, tools: {}, commands: {} },
+    });
+    const store = new MetricsStore(storage, PROJECT);
+    await store.init();
+
+    const ok = await store.reset();
+    expect(ok).toBe(true);
+    // The key stays present with an empty document: a fresh init() must not
+    // see a missing document and re-adopt the machine-global legacy history.
+    expect((data.get(key) as { triggerHits: number }).triggerHits).toBe(0);
+    expect(store.getSnapshot().triggerHits).toBe(0);
+
+    // A reloaded store sees the empty document instead of adopting legacy.
+    const reloaded = new MetricsStore(storage, PROJECT);
+    await reloaded.init();
+    expect(reloaded.getSnapshot().triggerHits).toBe(0);
+  });
+
+  it("runs a reset after an in-flight flush settles, so old counts cannot come back", async () => {
     const key = storageKeyFor(PROJECT.path);
     const { storage, data, set } = fakeStorage({
       [key]: { version: 2, triggerHits: 9, tools: {}, commands: {} },
@@ -505,37 +528,32 @@ describe("MetricsStore", () => {
     const store = new MetricsStore(storage, PROJECT);
     await store.init();
 
-    // Hold the flush's read until the reset has wiped the document, then let
-    // the write land afterwards - the interleaving that resurrects old counts.
-    let releaseGet: (() => void) | undefined;
-    storage.get = (k) =>
-      new Promise((resolve) => {
-        releaseGet = () => resolve(data.get(k));
-      });
+    // Hold the flush's write so it is still in flight when reset is called.
     let releaseSet: (() => void) | undefined;
-    const gatedSet: MetricsStorage["set"] = (k, v) =>
-      new Promise((resolve) => {
-        releaseSet = () => {
-          data.set(k, v);
-          resolve();
-        };
-      });
-    set.mockImplementationOnce(gatedSet);
+    set.mockImplementationOnce(
+      (k, v) =>
+        new Promise<void>((resolve) => {
+          releaseSet = () => {
+            data.set(k, v);
+            resolve();
+          };
+        }),
+    );
 
     await store.recordTrigger();
     const flushPromise = store.flush();
-    await store.reset();
-    releaseGet?.();
+    const resetPromise = store.reset(); // serialized behind the flush
     await vi.waitFor(() => expect(releaseSet).toBeDefined());
     releaseSet?.();
-    await flushPromise;
+    await Promise.all([flushPromise, resetPromise]);
 
-    // The pre-reset write was rolled back after it landed.
-    expect(data.has(key)).toBe(false);
+    // The flush's write landed first; the reset then overwrote it with an
+    // empty document, so no pre-reset counts survive.
+    expect((data.get(key) as { triggerHits: number }).triggerHits).toBe(0);
     expect(store.getSnapshot().triggerHits).toBe(0);
   });
 
-  it("drops pre-reset pending increments when a reset wins a failing write race", async () => {
+  it("drops pending increments when the write fails and a reset follows", async () => {
     const key = storageKeyFor(PROJECT.path);
     const { storage, data, set } = fakeStorage({
       [key]: { version: 2, triggerHits: 9, tools: {}, commands: {} },
@@ -545,23 +563,15 @@ describe("MetricsStore", () => {
       const store = new MetricsStore(storage, PROJECT);
       await store.init();
 
-      // Hold the flush's read until the reset has wiped the document.
-      let releaseGet: (() => void) | undefined;
-      storage.get = (k) =>
-        new Promise((resolve) => {
-          releaseGet = () => resolve(data.get(k));
-        });
       set.mockRejectedValueOnce(new Error("read-only"));
-
       await store.recordTrigger();
-      const flushPromise = store.flush();
-      await store.reset();
-      releaseGet?.();
-      await flushPromise; // the write fails; the reset must win
+      await store.flush(); // write fails; increments stay pending
 
-      // No retry may resurrect the pre-reset increment.
+      await store.reset(); // clears pending state and writes an empty document
+
+      // The retry must not resurrect the pre-reset increment.
       await store.flush();
-      expect(data.has(key)).toBe(false);
+      expect((data.get(key) as { triggerHits: number }).triggerHits).toBe(0);
     } finally {
       silenced.mockRestore();
     }
@@ -587,5 +597,27 @@ describe("MetricsStore", () => {
     } finally {
       silenced.mockRestore();
     }
+  });
+});
+
+describe("mergeDelta", () => {
+  it("keeps every increment and prefers the newer delta's status on a timestamp tie", () => {
+    const entry = (runs: number, ok: number, status: "ok" | "error") => ({
+      runs,
+      ok,
+      error: runs - ok,
+      findings: 0,
+      lastUsedAt: "2026-01-01T00:00:00.000Z",
+      lastStatus: status,
+    });
+    const delta = (tool: { runs: number; ok: number; status: "ok" | "error" }): MetricsDelta => ({
+      tools: { php_lint: entry(tool.runs, tool.ok, tool.status) },
+      commands: {},
+      triggerHits: 1,
+    });
+
+    const merged = mergeDelta(delta({ runs: 1, ok: 1, status: "ok" }), delta({ runs: 2, ok: 0, status: "error" }));
+    expect(merged.tools.php_lint).toMatchObject({ runs: 3, ok: 1, error: 2, lastStatus: "error" });
+    expect(merged.triggerHits).toBe(2);
   });
 });

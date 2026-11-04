@@ -8,11 +8,17 @@ export const PHP_SYSTEM_HINT =
 export const PHP_TRIGGER = /(php|composer|phpunit|pest|phpstan|psalm|rector|cs-fixer|phpcs|mago|xdebug)/i;
 
 /**
+ * The trigger for injecting the PHP system hint. Deliberately narrower than
+ * PHP_TRIGGER: "pest" and "psalm" are ordinary English/Latin words, and the
+ * hint is only added on a clear PHP mention.
+ */
+export const PHP_HINT_TRIGGER = /(php|composer|phpunit|phpstan|cs-fixer|phpcs|mago|xdebug)/i;
+
+/**
  * Minimal, structural view of a chat message - the v2 SessionContext's
  * `messages` is assignable to this, without this module importing the AI
- * schema. Text parts longer than this are not fully scanned.
+ * schema. Text parts are scanned in full.
  */
-const MAX_TEXT_SCAN = 8000;
 type MessageLike = { role?: unknown; content?: unknown };
 
 /** True when a user message in this request mentions the PHP ecosystem. */
@@ -26,7 +32,7 @@ export function mentionsPhp(messages: ReadonlyArray<MessageLike> | undefined): b
       if (!part || typeof part !== "object") continue;
       const text = (part as { text?: unknown }).text;
       if ((part as { type?: unknown }).type === "text" && typeof text === "string") {
-        if (PHP_TRIGGER.test(text.slice(0, MAX_TEXT_SCAN))) return true;
+        if (PHP_HINT_TRIGGER.test(text)) return true;
       }
     }
   }

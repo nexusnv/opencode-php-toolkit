@@ -16,6 +16,9 @@ jobs:
         node: [22, 24]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # No step pushes to git; dependency install scripts must not see the token.
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
@@ -25,7 +28,10 @@ jobs:
       - run: npm test
       - run: npm run build
       - name: dist/ must be in sync with src/
-        run: git diff --exit-code -- dist
+        # Stage first so build outputs that were never committed count too.
+        run: |
+          git add -A -- dist
+          git diff --cached --exit-code -- dist
       - name: plugin imports and exposes the right id
         run: |
           node -e "import('./dist/index.js').then(m => { if (m.default.id !== 'php-toolkit') throw new Error('unexpected plugin id') })"
@@ -37,6 +43,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -45,7 +53,9 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - name: dist/ must be in sync with src/
-        run: git diff --exit-code -- dist
+        run: |
+          git add -A -- dist
+          git diff --cached --exit-code -- dist
       # The published plugin runs on Node 20; the test suite does not.
       - name: plugin imports
         run: node -e "import('./dist/index.js').then(m => console.log('plugin id:', m.default.id))"

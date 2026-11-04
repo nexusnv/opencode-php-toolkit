@@ -1,5 +1,5 @@
-import { access } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 import { Plugin } from "@opencode/plugin";
 import { COMMAND_DEFS, SKILL_IDS, PKG_ROOT, loadText, parseFrontmatter } from "./content.js";
 import { detectPhpProject, formatDetection } from "./tools/detect.js";
@@ -7,12 +7,12 @@ import { composerAudit, composerOutdated, composerValidate, phpLint, phpStaticAn
 import { MetricsRegistry, resolveProjectScope } from "./metrics/registry.js";
 import type { MetricsProject } from "./metrics/store.js";
 import { formatMetricsSnapshot } from "./metrics/format.js";
-import { PHP_SYSTEM_HINT, PHP_TRIGGER, isDestructiveShell, mentionsPhp } from "./hooks/php-context.js";
+import { PHP_SYSTEM_HINT, PHP_TRIGGER, PHP_HINT_TRIGGER, isDestructiveShell, mentionsPhp } from "./hooks/php-context.js";
 
-async function pathExists(path: string): Promise<boolean> {
+/** Cheap per-request check; a composer.json may appear or vanish mid-session. */
+function composerJsonExists(dir: string): boolean {
   try {
-    await access(path);
-    return true;
+    return existsSync(join(dir, "composer.json"));
   } catch {
     return false;
   }
@@ -30,9 +30,6 @@ export default Plugin.define({
   async setup(ctx) {
     const dir = ctx.location.directory;
     const project: MetricsProject = { name: basename(dir) || dir, path: dir };
-    // The PHP hint is only worth its tokens when PHP work is actually on the
-    // table: in the project itself, or in this request's messages.
-    const projectIsPhp = await pathExists(join(dir, "composer.json"));
     const metrics = new MetricsRegistry(ctx.storage, project);
     try {
       await metrics.initActive();
@@ -153,17 +150,25 @@ export default Plugin.define({
     try {
       track(
         await ctx.tool.transform((editor) => {
+          // Read-only unless noted: php_test executes the project's test
+          // suite, and php_static_analysis runs the project's analyzer, which
+          // may execute project-configured code (bootstrap, plugins).
           editor.namespace({
             name: "php",
-            description: "Framework-agnostic PHP project tools (read-only by default; php_test executes the project's test suite)",
+            description:
+              "Framework-agnostic PHP project tools (read-only unless noted; php_test executes the project's test suite and php_static_analysis runs the project's analyzer, which may execute project code)",
           });
+          // Every handler resolves the requested directory once, so execution
+          // (child cwd, vendor binaries) and metrics attribution always use
+          // the same absolute path, independent of the process working dir.
+          const cwdOf = (input: { directory?: string } | undefined): string => resolve(dir, input?.directory ?? dir);
           editor.add({
             name: "project_detect",
             description: "Detect PHP project intel from composer.json/lock: PHP requirement, PSR-4 roots, PHPUnit/Pest/PHPStan/Psalm/CS-Fixer/Rector presence, analyzer/fixer config files, composer platform.php. No shell exec.",
             input: { type: "object", properties: { directory: { type: "string" } }, additionalProperties: false },
             options: { namespace: "php" },
             execute: tracked("php_project_detect", async (input: { directory?: string }) => {
-              const info = await detectPhpProject(input.directory ?? dir);
+              const info = await detectPhpProject(cwdOf(input));
               return {
                 text: formatDetection(info),
                 status: "ok",
@@ -186,7 +191,7 @@ export default Plugin.define({
             },
             options: { namespace: "php" },
             execute: tracked("php_lint", async (input: { paths: string[]; directory?: string }, context) => {
-              const cwd = input.directory ?? dir;
+              const cwd = cwdOf(input);
               const lint = await phpLint(input.paths, cwd, context.signal);
               const validated = await composerValidate(cwd, context.signal);
               return {
@@ -203,25 +208,25 @@ export default Plugin.define({
             input: { type: "object", properties: { directory: { type: "string" } }, additionalProperties: false },
             options: { namespace: "php" },
             execute: tracked("php_composer_audit", async (input: { directory?: string }, context) => {
-              const cwd = input.directory ?? dir;
+              const cwd = cwdOf(input);
               return composerAudit(cwd, context.signal);
             }),
           });
           editor.add({
             name: "composer_outdated",
             description:
-              "Run composer outdated --direct --format=json (read-only, hits the network). Lists direct dependencies with a newer version; the count is reported as findings.",
+              "Run composer outdated --direct --format=json (read-only; reaches the network - the repositories configured in the project's composer.json determine which hosts are contacted). Lists direct dependencies with a newer version; the count is reported as findings.",
             input: { type: "object", properties: { directory: { type: "string" } }, additionalProperties: false },
             options: { namespace: "php" },
             execute: tracked("php_composer_outdated", async (input: { directory?: string }, context) => {
-              const cwd = input.directory ?? dir;
+              const cwd = cwdOf(input);
               return composerOutdated(cwd, context.signal);
             }),
           });
           editor.add({
             name: "static_analysis",
             description:
-              "Run PHPStan (or Psalm when PHPStan is absent) on the project with JSON output. Read-only; needs the dev dependency installed (vendor/bin). Analysis errors count as findings; a broken analyzer is an error, not a finding. Pass `tool` to force 'phpstan' or 'psalm'.",
+              "Run PHPStan (or Psalm when PHPStan is absent) on the project with JSON output. The analyzer binary may execute project-configured code (bootstrap files, autoload, Psalm plugins). Needs the dev dependency installed (vendor/bin). Analysis errors count as findings; a broken analyzer is an error, not a finding. Pass `tool` to force 'phpstan' or 'psalm'.",
             input: {
               type: "object",
               properties: {
@@ -232,7 +237,7 @@ export default Plugin.define({
             },
             options: { namespace: "php" },
             execute: tracked("php_static_analysis", async (input: { directory?: string; tool?: "auto" | "phpstan" | "psalm" }, context) => {
-              const cwd = input.directory ?? dir;
+              const cwd = cwdOf(input);
               return phpStaticAnalysis(cwd, context.signal, input.tool ?? "auto");
             }),
           });
@@ -250,14 +255,14 @@ export default Plugin.define({
             },
             options: { namespace: "php" },
             execute: tracked("php_test", async (input: { directory?: string; filter?: string }, context) => {
-              const cwd = input.directory ?? dir;
+              const cwd = cwdOf(input);
               return phpTest(cwd, context.signal, input.filter);
             }),
           });
           editor.add({
             name: "metrics",
             description:
-              "Show local PHP toolkit usage metrics for this project: tool runs, ok/error outcomes, issues surfaced, command usage, PHP prompt hits. Stored locally; the plugin sends no telemetry. Input: `reset: true` deletes this project's metrics document (wipe, no undo); `export: true` returns the snapshot as raw JSON instead of the rendered view.",
+              "Show local PHP toolkit usage metrics for this project: tool runs, ok/error outcomes, issues surfaced, command usage, PHP prompt hits. Stored locally; the plugin sends no telemetry. Input: `reset: true` clears this project's metrics (replaces the document with an empty one, no undo); `export: true` returns the snapshot as raw JSON (without reset; with reset, the JSON is followed by the reset confirmation).",
             input: {
               type: "object",
               properties: {
@@ -267,11 +272,11 @@ export default Plugin.define({
                 },
                 reset: {
                   type: "boolean",
-                  description: "Delete this project's metrics document and start over (no undo).",
+                  description: "Clear this project's metrics and start over (no undo).",
                 },
                 export: {
                   type: "boolean",
-                  description: "Return the snapshot as raw JSON instead of the rendered view.",
+                  description: "Return the snapshot as raw JSON instead of the rendered view (without reset; combined with reset, the JSON is followed by the reset confirmation).",
                 },
               },
               additionalProperties: false,
@@ -286,17 +291,25 @@ export default Plugin.define({
               const reset = (input as { reset?: boolean } | undefined)?.reset;
               const exportJson = (input as { export?: boolean } | undefined)?.export;
               const snapshot = metrics.active.getSnapshot();
+              if (exportJson && !reset) {
+                // Raw JSON, as documented. The absolute project path stays
+                // local: tool output can reach a remote model provider, and
+                // the rendered view promises no absolute paths either.
+                const { projectPath: _local, ...shareable } = snapshot;
+                return { content: JSON.stringify(shareable, null, 2) };
+              }
               const parts: string[] = [];
               if (exportJson) {
                 // Export reflects the state before any reset is applied.
-                parts.push(`JSON snapshot (current state):\n${JSON.stringify(snapshot, null, 2)}`);
+                const { projectPath: _local, ...shareable } = snapshot;
+                parts.push(JSON.stringify(shareable, null, 2));
               }
               if (reset) {
                 const ok = await metrics.resetActive();
                 parts.push(
                   ok
-                    ? "php_metrics: metrics document for this project deleted. Tracking starts from zero on the next tool call."
-                    : "php_metrics: could not delete the metrics document (storage error) - it was left untouched.",
+                    ? "php_metrics: metrics for this project cleared. Tracking starts from zero on the next tool call."
+                    : "php_metrics: could not clear the metrics (storage error) - they were left untouched.",
                 );
               }
               if (parts.length) return { content: parts.join("\n\n") };
@@ -326,7 +339,11 @@ export default Plugin.define({
       );
       track(
         await ctx.session.hook("context", (event) => {
-          if (projectIsPhp || mentionsPhp(event.messages)) {
+          // The PHP hint is only worth its tokens when PHP work is actually
+          // on the table: in the project itself (checked per request - a
+          // composer.json may appear or vanish mid-session), or in this
+          // request's messages.
+          if (composerJsonExists(dir) || mentionsPhp(event.messages)) {
             event.system.push({ type: "text", text: PHP_SYSTEM_HINT });
           }
         }),

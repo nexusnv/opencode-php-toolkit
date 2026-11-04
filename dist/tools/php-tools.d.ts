@@ -47,7 +47,7 @@ export interface AnalysisReport {
 export declare function parsePhpStanReport(stdout: string): AnalysisReport | null;
 /** Parses the `--output-format=json` output of psalm (array of issues). */
 export declare function parsePsalmReport(stdout: string): AnalysisReport | null;
-export declare function phpStaticAnalysis(cwd: string, signal?: AbortSignal, selection?: StaticAnalysisSelection): Promise<ToolOutcome>;
+export declare function phpStaticAnalysis(rawCwd: string, signal?: AbortSignal, selection?: StaticAnalysisSelection): Promise<ToolOutcome>;
 export type TestRunnerKind = "pest" | "phpunit";
 export interface TestSummary {
     tests: number;
@@ -70,7 +70,7 @@ export declare function parseJUnitReport(stdout: string): TestSummary | null;
  * binary), the working directory is explicit, and the run is time-boxed and
  * abortable. Failing tests are findings, not a tool error.
  */
-export declare function phpTest(cwd: string, signal?: AbortSignal, filter?: string): Promise<ToolOutcome>;
+export declare function phpTest(rawCwd: string, signal?: AbortSignal, filter?: string): Promise<ToolOutcome>;
 export interface OutdatedEntry {
     name: string;
     from: string;

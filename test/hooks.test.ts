@@ -48,6 +48,15 @@ describe("mentionsPhp", () => {
     ).toBe(false);
   });
 
+  it("ignores ambiguous non-PHP words", () => {
+    expect(mentionsPhp([user("summarize the pest control report")])).toBe(false);
+    expect(mentionsPhp([user("read psalm 23 out loud")])).toBe(false);
+  });
+
+  it("scans long messages beyond any fixed cap", () => {
+    expect(mentionsPhp([user(`${"x".repeat(9000)} please run phpstan`)])).toBe(true);
+  });
+
   it("ignores non-text parts and malformed input", () => {
     expect(mentionsPhp([{ role: "user", content: [{ type: "tool-call", input: "composer" }] }])).toBe(false);
     expect(mentionsPhp(undefined)).toBe(false);

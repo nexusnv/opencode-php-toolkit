@@ -21,9 +21,11 @@ Published package (after `npm publish`):
 ```
 
 > On install, the package copies the four `agents/php-*.md` files into
-> `~/.config/opencode/agents/` as a convenience (see below). Set
-> `PHP_TOOLKIT_SKIP_AGENT_COPY=1` before installing to skip that copy; the
-> rest of the plugin is unaffected.
+> `~/.config/opencode/agents/` as a convenience (see below). Existing files
+> are never overwritten — a customized agent keeps its content across
+> installs and upgrades; delete the file to get the bundled version back.
+> Set `PHP_TOOLKIT_SKIP_AGENT_COPY=1` before installing to skip that copy;
+> the rest of the plugin is unaffected.
 
 From git (no npm publish needed — `dist/` is committed, so clones work
 as-is; always run `npm run build` before committing):
@@ -68,17 +70,17 @@ opencode plugin add file:///home/leonidas/dev/nexusnv/opencode-php-toolkit
 
 ## What you get
 
-- Agents (`agents/php-*.md`, `mode: subagent`): `php-reviewer`, `php-debugger`, `php-modernizer`, `php-tester`. On install, the package's `postinstall` script copies these four files into `~/.config/opencode/agents/` as a convenience (v2 `AgentEditor` has no `add`; transforms can't create agents — files are the source of truth). Set `PHP_TOOLKIT_SKIP_AGENT_COPY=1` in the environment to opt out. The script writes nothing besides those four files (the OpenCode `commands/` directory is not touched). To undo after install, delete `php-reviewer.md`, `php-debugger.md`, `php-modernizer.md` and `php-tester.md` from `~/.config/opencode/agents/`.
+- Agents (`agents/php-*.md`, `mode: subagent`): `php-reviewer`, `php-debugger`, `php-modernizer`, `php-tester`. On install, the package's `postinstall` script copies these four files into `~/.config/opencode/agents/` as a convenience, never overwriting files that already exist (v2 `AgentEditor` has no `add`; transforms can't create agents — files are the source of truth). Set `PHP_TOOLKIT_SKIP_AGENT_COPY=1` in the environment to opt out. The script writes nothing besides those four files (the OpenCode `commands/` directory is not touched). To undo after install, delete `php-reviewer.md`, `php-debugger.md`, `php-modernizer.md` and `php-tester.md` from `~/.config/opencode/agents/`.
 - Skills (8, autoinvoke): `php-standards`, `php-static-analysis`, `php-testing`, `php-security`, `php-modernize`, `php-composer`, `php-architecture`, `php-debug`.
 - Commands (7): `/php-review`, `/php-analyze`, `/php-fix-style`, `/php-test`, `/php-audit`, `/php-upgrade`, `/php-scaffold`.
 - Tools (`php_*` namespace, read-only unless noted):
   - `php_project_detect` — composer intel incl. analyzer/fixer config files and `composer config.platform.php`; no exec
   - `php_lint` — `php -l` + `composer validate`
   - `php_composer_audit` — known-vulnerable dependencies (network)
-  - `php_composer_outdated` — direct deps with a newer version (network)
-  - `php_static_analysis` — PHPStan (or Psalm when absent), JSON output; analysis errors count as findings
+  - `php_composer_outdated` — direct deps with a newer version (network; the repositories configured in the project's `composer.json` determine which hosts Composer contacts)
+  - `php_static_analysis` — PHPStan (or Psalm when absent), JSON output; analysis errors count as findings; **executes project-configured code** (analyzer binaries run bootstrap files, autoload and Psalm plugins with this session's privileges)
   - `php_test` — runs `vendor/bin/pest` or `vendor/bin/phpunit` against JUnit output; **executes project code** (tests only, 300s timeout, never a bare PATH binary)
-  - `php_metrics` — local usage metrics; `reset: true` deletes this project's metrics document, `export: true` dumps the snapshot as raw JSON
+  - `php_metrics` — local usage metrics; `reset: true` clears this project's metrics, `export: true` dumps the snapshot as raw JSON (absolute project path omitted)
 - Hooks: `prompt` tags PHP context, `context` adds typed-PHP system hint (only when the project has a `composer.json` or the request's user messages mention PHP — no tokens spent on unrelated sessions), `tool.execute.before` warns on destructive `composer update` / `rector process` without `--dry-run` / `php-cs-fixer fix` without `--dry-run`.
 
 ## Local metrics
@@ -115,10 +117,14 @@ PHP toolkit metrics (local-only, never leaves this machine)
   numbers never absorb another's. Pass `allProjects: true` to `php_metrics`
   for the machine-wide breakdown. That view is eventually consistent: a
   session running elsewhere may still have unsaved events.
-  `php_metrics` also accepts `reset: true` to delete this project's metrics
-  document (immediate, no undo — tracking then starts from zero) and
+  `php_metrics` also accepts `reset: true` to clear this project's metrics
+  (immediate, no undo — the document is replaced with an empty one, which
+  also prevents machine-global legacy history from being re-adopted here) and
   `export: true` to return the snapshot as raw JSON instead of the rendered
-  view (export reflects the state before any `reset` is applied).
+  view (export reflects the state before any `reset` is applied; the
+  absolute `projectPath` is omitted so the export keeps the rendered view's
+  no-absolute-paths promise; combined with `reset`, the JSON is followed by
+  the reset confirmation).
 
 ### Privacy
 
@@ -134,10 +140,12 @@ Two things worth knowing precisely:
 
 - **`php_composer_audit` and `php_composer_outdated` reach the network.**
   They run
-  `composer audit` / `composer outdated`, which contact Packagist to look up
-  known vulnerabilities and newer releases. That request is made by Composer,
-  on your behalf, when you ask for it — the plugin does not transmit anything
-  itself.
+  `composer audit` / `composer outdated`, which contact the repositories
+  configured in the project's `composer.json` (Packagist by default) to look
+  up known vulnerabilities and newer releases. That request is made by
+  Composer, on your behalf, when you ask for it — the plugin does not
+  transmit anything itself, and a project pointing Composer at other hosts
+  determines where the requests go.
 - **`php_test` executes project code.** It runs the project's own test suite
   (vendor binary only, explicit working directory, 300s timeout) — treat it
   like running `vendor/bin/phpunit` yourself.

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { access } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 async function pathExists(path) {
     try {
         await access(path);
@@ -32,9 +32,17 @@ const PHP_PARSE_ERROR_EXIT = 255;
 /** `composer validate` exits 1 for a bad manifest, 3 when there is none. */
 const COMPOSER_INVALID_EXIT = 1;
 const COMPOSER_NO_MANIFEST_EXIT = 3;
+/** Reports (JUnit, analyzer JSON) can far exceed 1 MiB on large projects. */
+const MAX_REPORT_BUFFER = 64 * 1024 * 1024;
 function run(cmd, args, cwd, timeoutMs, signal) {
     return new Promise((resolve) => {
-        const child = execFile(cmd, args, { cwd, timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+        if (signal?.aborted) {
+            // An already-aborted signal never fires its abort event, so the
+            // listener below would not stop the child - do not spawn at all.
+            resolve({ ok: false, stdout: "", stderr: "", code: "ABORT_ERR", killed: true });
+            return;
+        }
+        const child = execFile(cmd, args, { cwd, timeout: timeoutMs, maxBuffer: MAX_REPORT_BUFFER }, (err, stdout, stderr) => {
             resolve({
                 ok: !err,
                 stdout: String(stdout ?? ""),
@@ -237,6 +245,11 @@ export function parsePhpStanReport(stdout) {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
         return null;
     const doc = parsed;
+    // A JSON object without report fields is not a phpstan report (e.g. a
+    // broken analyzer emitting arbitrary JSON): refuse it, so a failing exit
+    // is reported as an analyzer error instead of a clean run.
+    if (doc.totals === undefined && doc.files === undefined)
+        return null;
     const lines = [];
     let counted = 0;
     if (doc.files && typeof doc.files === "object") {
@@ -254,12 +267,15 @@ export function parsePhpStanReport(stdout) {
             }
         }
     }
-    // totals.errors is the authoritative count; when it is absent, every message
-    // is counted - only the displayed list is capped, never the count itself.
-    const findings = typeof doc.totals?.errors === "number" && Number.isFinite(doc.totals.errors)
-        ? doc.totals.errors
+    // totals.errors counts errors not tied to a file; file-specific errors are
+    // counted in totals.file_errors (PHPStan's JsonErrorFormatter), not in
+    // totals.errors. Fall back to the parsed message count when a total is
+    // absent or invalid - only the displayed list is capped, never the count.
+    const notFileErrors = typeof doc.totals?.errors === "number" && Number.isFinite(doc.totals.errors) ? doc.totals.errors : 0;
+    const fileErrors = typeof doc.totals?.file_errors === "number" && Number.isFinite(doc.totals.file_errors)
+        ? doc.totals.file_errors
         : counted;
-    return { findings, lines };
+    return { findings: notFileErrors + fileErrors, lines };
 }
 /** Parses the `--output-format=json` output of psalm (array of issues). */
 export function parsePsalmReport(stdout) {
@@ -291,7 +307,10 @@ export function parsePsalmReport(stdout) {
     }
     return { findings: issues.length, lines };
 }
-export async function phpStaticAnalysis(cwd, signal, selection = "auto") {
+export async function phpStaticAnalysis(rawCwd, signal, selection = "auto") {
+    // Resolve once: the vendor binaries are joined onto this path AND it is
+    // the child cwd, so a relative input must not be applied twice.
+    const cwd = resolve(rawCwd);
     const phpstanBin = join(cwd, "vendor/bin/phpstan");
     const psalmBin = join(cwd, "vendor/bin/psalm");
     const [hasPhpstan, hasPsalm] = await Promise.all([pathExists(phpstanBin), pathExists(psalmBin)]);
@@ -400,7 +419,10 @@ export function parseJUnitReport(stdout) {
  * binary), the working directory is explicit, and the run is time-boxed and
  * abortable. Failing tests are findings, not a tool error.
  */
-export async function phpTest(cwd, signal, filter) {
+export async function phpTest(rawCwd, signal, filter) {
+    // Resolve once: the vendor binaries are joined onto this path AND it is
+    // the child cwd, so a relative input must not be applied twice.
+    const cwd = resolve(rawCwd);
     const pestBin = join(cwd, "vendor/bin/pest");
     const phpunitBin = join(cwd, "vendor/bin/phpunit");
     const [hasPest, hasPhpunit] = await Promise.all([pathExists(pestBin), pathExists(phpunitBin)]);
@@ -438,7 +460,7 @@ export async function phpTest(cwd, signal, filter) {
             };
         }
         return {
-            text: `${kind}: tests passed (no failures), but the JUnit report could not be parsed.`,
+            text: `${kind}: exited 0, but no parseable JUnit report was produced - cannot confirm tests actually ran (a filter may have matched nothing).\n${r.stdout.slice(0, 2000)}`.trim(),
             status: "ok",
             findings: 0,
         };
