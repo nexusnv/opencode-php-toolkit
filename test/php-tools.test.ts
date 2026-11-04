@@ -284,8 +284,12 @@ cat <<'XML'
 <?xml version="1.0" encoding="UTF-8"?>
 <testsuites>
 <testsuite name="Test Suite" tests="3" assertions="5" failures="1" errors="0" skipped="0">
+<testsuite name="Acme.Tests.PassingTest" tests="1" assertions="3" failures="0" errors="0" skipped="0">
+<testcase name="testMultiply" classname="Acme.Tests.PassingTest" file="/tmp/fake/tests/PassingTest.php" line="10" assertions="3"/>
+</testsuite>
+<testsuite name="Acme.Tests.CalculatorTest" tests="2" assertions="2" failures="1" errors="0" skipped="0">
 <testcase name="testAdd" classname="Acme.Tests.CalculatorTest" file="/tmp/fake/tests/CalculatorTest.php" line="22" assertions="2"><failure message="Failed asserting that 3 matches expected 4.">trace</failure></testcase>
-<testcase name="testMultiply" classname="Acme.Tests.CalculatorTest" file="/tmp/fake/tests/CalculatorTest.php" line="30" assertions="3"/>
+</testsuite>
 </testsuite>
 </testsuites>
 XML
@@ -420,6 +424,35 @@ describe("parsers", () => {
   it("parses junit regardless of attribute order", () => {
     const xml = '<testsuites><testsuite assertions="9" name="t" errors="1" failures="1" tests="4" skipped="2"/></testsuites>';
     expect(parseJUnitReport(xml)).toMatchObject({ tests: 4, assertions: 9, failures: 1, errors: 1, skipped: 2 });
+  });
+
+  it("attributes a failure to its own testcase when a passing one precedes it", () => {
+    const xml =
+      '<testsuite name="t" tests="2" assertions="3" errors="0" failures="1" skipped="0">' +
+      '<testcase name="ok" file="/p/PassingTest.php" line="10" assertions="2"/>' +
+      '<testcase name="bad" file="/p/FailingTest.php" line="42" assertions="1"><failure message="boom">trace</failure></testcase>' +
+      "</testsuite>";
+    expect(parseJUnitReport(xml)?.failing).toEqual(["/p/FailingTest.php:42 boom"]);
+  });
+
+  it("decodes numeric entities and keeps only the first line of a failure message", () => {
+    const xml =
+      '<testsuite name="t" tests="1" assertions="1" errors="0" failures="1" skipped="0">' +
+      '<testcase name="bad" file="/p/FailingTest.php" line="7" assertions="1">' +
+      '<failure message="first line&#10;second &quot;line&quot;">trace</failure>' +
+      "</testcase>" +
+      "</testsuite>";
+    expect(parseJUnitReport(xml)?.failing).toEqual(["/p/FailingTest.php:7 first line"]);
+  });
+
+  it("counts every phpstan message when totals are missing, beyond the 20-line cap", () => {
+    const files: Record<string, unknown> = {};
+    for (let i = 0; i < 25; i++) {
+      files[`src/File${i}.php`] = { messages: [{ message: `problem ${i}`, line: i + 1 }] };
+    }
+    const report = parsePhpStanReport(JSON.stringify({ files }));
+    expect(report?.findings).toBe(25);
+    expect(report?.lines).toHaveLength(20);
   });
 
   it("parses outdated payloads and drops up-to-date entries", () => {

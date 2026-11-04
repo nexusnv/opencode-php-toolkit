@@ -303,6 +303,8 @@ export class MetricsStore {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private retries = 0;
   private reportedFailure = false;
+  /** Bumped by reset(); flushes in flight detect the wipe via this counter. */
+  private generation = 0;
 
   constructor(
     private readonly storage: MetricsStorage,
@@ -422,6 +424,10 @@ export class MetricsStore {
 
     const pending = this.delta;
     this.delta = emptyDelta();
+    // A reset() that lands while this flush is in flight wins: the wiped
+    // document must not come back through the write, a retry, or a pending
+    // merge. Every await below is followed by a generation check.
+    const generation = this.generation;
     // Read the latest document first so a concurrent writer's counts survive.
     // If the document cannot be read — or belongs to a newer format — the
     // write is skipped rather than overwriting counts we cannot see.
@@ -430,6 +436,11 @@ export class MetricsStore {
       const raw = await this.storage.get(this.key);
       const loaded = deserialize(raw, this.project);
       if (!loaded.supported) {
+        if (generation !== this.generation) {
+          // A reset() removed the newer document while we read; its verdict
+          // no longer applies and the store stays writable.
+          return;
+        }
         // A newer format owns this document - do not overwrite it. Same rule
         // as init(): this store refuses to write what it cannot read.
         this.writable = false;
@@ -442,7 +453,9 @@ export class MetricsStore {
       latest = loaded.metrics;
     } catch {
       // Could not confirm the latest document - keep everything pending and
-      // retry later instead of overwriting counts we cannot see.
+      // retry later instead of overwriting counts we cannot see. Unless a
+      // reset() won the race: its wipe must not be undone by a retry.
+      if (generation !== this.generation) return;
       this.delta = mergeDelta(pending, this.delta);
       this.scheduleRetry();
       return;
@@ -450,6 +463,15 @@ export class MetricsStore {
     try {
       const merged = applyDelta(latest, pending);
       await this.storage.set(this.key, merged);
+      if (generation !== this.generation) {
+        // The reset() wiped the document while this write was in flight;
+        // remove what the write just resurrected and go back to a clean state.
+        await this.storage.remove(this.key).catch(() => {});
+        this.base = initialMetrics(this.project);
+        this.retries = 0;
+        this.reportedFailure = false;
+        return;
+      }
       this.base = merged;
       this.wrote = true;
       this.retries = 0;
@@ -457,6 +479,7 @@ export class MetricsStore {
     } catch {
       // Keep the change pending so the next flush retries it. Increments
       // recorded while this flush was in flight survive the retry too.
+      if (generation !== this.generation) return;
       this.delta = mergeDelta(pending, this.delta);
       this.scheduleRetry();
     }
@@ -520,7 +543,10 @@ export class MetricsStore {
   /**
    * Deletes this project's persisted document and starts over with an empty
    * one. Pending increments are discarded too - this is a full wipe, used by
-   * `php_metrics` when the user explicitly asks for it.
+   * `php_metrics` when the user explicitly asks for it. A flush already in
+   * flight is rolled back when it lands (see the generation check in
+   * flush()); a concurrent process can still write pre-reset counts in a
+   * narrow window, so run the reset again if that matters.
    */
   async reset(): Promise<boolean> {
     try {
@@ -541,6 +567,9 @@ export class MetricsStore {
     this.wrote = false;
     this.retries = 0;
     this.writable = true;
+    // A failed write before the reset must not silence the next failure log.
+    this.reportedFailure = false;
+    this.generation += 1;
     return true;
   }
 

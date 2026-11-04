@@ -17,6 +17,15 @@ function decodeXmlEntities(text: string): string {
     .replaceAll("&apos;", "'")
     .replaceAll("&gt;", ">")
     .replaceAll("&lt;", "<")
+    // Numeric entities too: PHPUnit escapes newlines inside attribute values
+    // as &#10;, so a multi-line failure message would otherwise stay garbled.
+    // Malformed code points are left as-is instead of throwing.
+    .replace(/&#x([0-9a-fA-F]+);|&#(\d+);/g, (match, hex, dec) => {
+      const code = hex !== undefined ? Number.parseInt(hex, 16) : Number(dec);
+      return Number.isInteger(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
+    })
+    // &amp; last: it re-creates the literal forms decoded above only when the
+    // input was double-escaped (&amp;quot; etc.).
     .replaceAll("&amp;", "&");
 }
 
@@ -272,25 +281,26 @@ export function parsePhpStanReport(stdout: string): AnalysisReport | null {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   const doc = parsed as { totals?: { errors?: unknown }; files?: unknown };
   const lines: string[] = [];
+  let counted = 0;
   if (doc.files && typeof doc.files === "object") {
     for (const [file, value] of Object.entries(doc.files as Record<string, unknown>)) {
       const messages = (value as { messages?: unknown } | null)?.messages;
       if (!Array.isArray(messages)) continue;
       for (const raw of messages) {
+        counted += 1;
         const m = raw as { line?: unknown; message?: unknown } | null;
         const line = typeof m?.line === "number" ? `:${m.line}` : "";
         const msg = typeof m?.message === "string" ? m.message : "";
-        if (msg) lines.push(`${file}${line} ${msg}`);
-        if (lines.length >= 20) break;
+        if (msg && lines.length < 20) lines.push(`${file}${line} ${msg}`);
       }
-      if (lines.length >= 20) break;
     }
   }
-  // totals.errors is the authoritative count; when it is absent, count what we listed.
+  // totals.errors is the authoritative count; when it is absent, every message
+  // is counted - only the displayed list is capped, never the count itself.
   const findings =
     typeof doc.totals?.errors === "number" && Number.isFinite(doc.totals.errors)
       ? doc.totals.errors
-      : lines.length;
+      : counted;
   return { findings, lines };
 }
 
@@ -425,12 +435,17 @@ export function parseJUnitReport(stdout: string): TestSummary | null {
     return m ? Number(m[1]) : 0;
   };
   const failing: string[] = [];
-  for (const block of stdout.matchAll(/<testcase\b[\s\S]*?<\/testcase>/g)) {
+  // Testcases are matched one element at a time. A passing testcase is
+  // self-closing (no </testcase>), so a plain lazy match starting there would
+  // swallow following testcases and steal their file/line attributes.
+  for (const block of stdout.matchAll(/<testcase\b[^>]*\/>|<testcase\b[^>]*>[\s\S]*?<\/testcase>/g)) {
     const body = block[0];
     const msg = body.match(/<(failure|error)\b[^>]*message="([^"]*)"/);
     if (!msg) continue;
-    const file = body.match(/\bfile="([^"]*)"/);
-    const line = body.match(/\bline="(\d+)"/);
+    // file/line live on this testcase's own opening tag, never on a nested one.
+    const opening = body.slice(0, body.indexOf(">") + 1);
+    const file = opening.match(/\bfile="([^"]*)"/);
+    const line = opening.match(/\bline="(\d+)"/);
     const where = file ? `${file[1]}${line ? `:${line[1]}` : ""}` : "testcase";
     failing.push(`${where} ${decodeXmlEntities(msg[2]).split("\n")[0]}`);
     if (failing.length >= 20) break;

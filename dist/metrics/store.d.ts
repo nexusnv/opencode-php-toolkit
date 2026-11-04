@@ -102,6 +102,8 @@ export declare class MetricsStore {
     private retryTimer;
     private retries;
     private reportedFailure;
+    /** Bumped by reset(); flushes in flight detect the wipe via this counter. */
+    private generation;
     constructor(storage: MetricsStorage, project: MetricsProject);
     /** Storage key this store owns. */
     get storageKey(): string;
@@ -153,7 +155,10 @@ export declare class MetricsStore {
     /**
      * Deletes this project's persisted document and starts over with an empty
      * one. Pending increments are discarded too - this is a full wipe, used by
-     * `php_metrics` when the user explicitly asks for it.
+     * `php_metrics` when the user explicitly asks for it. A flush already in
+     * flight is rolled back when it lands (see the generation check in
+     * flush()); a concurrent process can still write pre-reset counts in a
+     * narrow window, so run the reset again if that matters.
      */
     reset(): Promise<boolean>;
     private markDirty;

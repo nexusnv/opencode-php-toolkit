@@ -35,6 +35,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Metrics: `flush()` refuses to overwrite a document written by a newer
   format, and retries instead of overwriting when the document cannot be
   re-read — neither case destroys counts any more.
+- Tools: `php_test` failure lines point at the failing test's own file/line
+  (a passing self-closing testcase earlier in the JUnit report stole the
+  attribution), and failure messages decode numeric XML entities (`&#10;`)
+  so multi-line messages render their first line instead of the escape.
+- Tools: PHPStan's fallback count (when `totals.errors` is missing) counts
+  every message instead of stopping at the 20-line display cap.
+- Metrics: `reset()` rolls back a flush write that was still in flight during
+  the wipe instead of letting it resurrect the deleted document, and a write
+  failure before a reset no longer silences the log for later failures.
 - Skills: the registered `path` now points inside the package (it pointed at
   the active project root, where the file never existed).
 - Tools: `composer audit` no-lock prose output ("No packages - skipping

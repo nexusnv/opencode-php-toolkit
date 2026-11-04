@@ -496,4 +496,96 @@ describe("MetricsStore", () => {
     await store.flush();
     expect((data.get(key) as { triggerHits: number }).triggerHits).toBe(1);
   });
+
+  it("undoes a write that raced a reset instead of resurrecting the wiped document", async () => {
+    const key = storageKeyFor(PROJECT.path);
+    const { storage, data, set } = fakeStorage({
+      [key]: { version: 2, triggerHits: 9, tools: {}, commands: {} },
+    });
+    const store = new MetricsStore(storage, PROJECT);
+    await store.init();
+
+    // Hold the flush's read until the reset has wiped the document, then let
+    // the write land afterwards - the interleaving that resurrects old counts.
+    let releaseGet: (() => void) | undefined;
+    storage.get = (k) =>
+      new Promise((resolve) => {
+        releaseGet = () => resolve(data.get(k));
+      });
+    let releaseSet: (() => void) | undefined;
+    const gatedSet: MetricsStorage["set"] = (k, v) =>
+      new Promise((resolve) => {
+        releaseSet = () => {
+          data.set(k, v);
+          resolve();
+        };
+      });
+    set.mockImplementationOnce(gatedSet);
+
+    await store.recordTrigger();
+    const flushPromise = store.flush();
+    await store.reset();
+    releaseGet?.();
+    await vi.waitFor(() => expect(releaseSet).toBeDefined());
+    releaseSet?.();
+    await flushPromise;
+
+    // The pre-reset write was rolled back after it landed.
+    expect(data.has(key)).toBe(false);
+    expect(store.getSnapshot().triggerHits).toBe(0);
+  });
+
+  it("drops pre-reset pending increments when a reset wins a failing write race", async () => {
+    const key = storageKeyFor(PROJECT.path);
+    const { storage, data, set } = fakeStorage({
+      [key]: { version: 2, triggerHits: 9, tools: {}, commands: {} },
+    });
+    const silenced = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const store = new MetricsStore(storage, PROJECT);
+      await store.init();
+
+      // Hold the flush's read until the reset has wiped the document.
+      let releaseGet: (() => void) | undefined;
+      storage.get = (k) =>
+        new Promise((resolve) => {
+          releaseGet = () => resolve(data.get(k));
+        });
+      set.mockRejectedValueOnce(new Error("read-only"));
+
+      await store.recordTrigger();
+      const flushPromise = store.flush();
+      await store.reset();
+      releaseGet?.();
+      await flushPromise; // the write fails; the reset must win
+
+      // No retry may resurrect the pre-reset increment.
+      await store.flush();
+      expect(data.has(key)).toBe(false);
+    } finally {
+      silenced.mockRestore();
+    }
+  });
+
+  it("logs storage failures again after a reset clears an earlier one", async () => {
+    const { storage, set } = fakeStorage();
+    const silenced = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const store = new MetricsStore(storage, PROJECT);
+      await store.init();
+
+      set.mockRejectedValueOnce(new Error("read-only"));
+      await store.recordTrigger();
+      await store.flush();
+      expect(silenced).toHaveBeenCalledTimes(1);
+
+      await store.reset();
+      set.mockRejectedValueOnce(new Error("read-only again"));
+      await store.recordTrigger();
+      await store.flush();
+      expect(silenced).toHaveBeenCalledTimes(2);
+    } finally {
+      silenced.mockRestore();
+    }
+  });
 });
