@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { Plugin } from "@opencode/plugin";
 import { COMMAND_DEFS, SKILL_IDS, PKG_ROOT, loadText, parseFrontmatter } from "./content.js";
@@ -7,16 +6,8 @@ import { composerAudit, composerOutdated, composerValidate, phpLint, phpStaticAn
 import { MetricsRegistry, resolveProjectScope } from "./metrics/registry.js";
 import type { MetricsProject } from "./metrics/store.js";
 import { formatMetricsSnapshot } from "./metrics/format.js";
-import { PHP_SYSTEM_HINT, PHP_TRIGGER, PHP_HINT_TRIGGER, isDestructiveShell, mentionsPhp } from "./hooks/php-context.js";
-
-/** Cheap per-request check; a composer.json may appear or vanish mid-session. */
-function composerJsonExists(dir: string): boolean {
-  try {
-    return existsSync(join(dir, "composer.json"));
-  } catch {
-    return false;
-  }
-}
+import { PHP_TRIGGER, isDestructiveShell } from "./hooks/php-context.js";
+import { L0_CONSTITUTION } from "./constitution.js";
 
 function skillTitle(id: string): string {
   return id
@@ -339,13 +330,7 @@ export default Plugin.define({
       );
       track(
         await ctx.session.hook("context", (event) => {
-          // The PHP hint is only worth its tokens when PHP work is actually
-          // on the table: in the project itself (checked per request - a
-          // composer.json may appear or vanish mid-session), or in this
-          // request's messages.
-          if (composerJsonExists(dir) || mentionsPhp(event.messages)) {
-            event.system.push({ type: "text", text: PHP_SYSTEM_HINT });
-          }
+          event.system.push({ type: "text", text: L0_CONSTITUTION });
         }),
       );
       track(
