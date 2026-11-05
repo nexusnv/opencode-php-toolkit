@@ -8,6 +8,10 @@ import type { MetricsProject } from "./metrics/store.js";
 import { formatMetricsSnapshot } from "./metrics/format.js";
 import { PHP_TRIGGER, isDestructiveShell } from "./hooks/php-context.js";
 import { L0_CONSTITUTION } from "./constitution.js";
+import { readToolkitConfig } from "./config.js";
+import { ProjectProfileCache } from "./profile.js";
+import { runRouting, runRoutingSafely } from "./routing/orchestrator.js";
+import type { SessionRoutingState } from "./routing/types.js";
 
 function skillTitle(id: string): string {
   return id
@@ -28,6 +32,11 @@ export default Plugin.define({
       // Metrics are optional: a storage failure must never take the toolkit down.
       console.error(`[php-toolkit] metrics unavailable: ${(err as Error).message}`);
     }
+
+    const config = readToolkitConfig(ctx.options);
+    const profileCache = new ProjectProfileCache();
+    const sessions = new Map<string, SessionRoutingState>();
+    const contentLengths = new Map<string, number>();
 
     /**
      * Wraps a tool so the metric reflects what the tool actually did.
@@ -75,6 +84,7 @@ export default Plugin.define({
         try {
           const body = await loadText(`skills/${id}/SKILL.md`);
           const { front, content } = parseFrontmatter(body);
+          contentLengths.set(id, Buffer.byteLength(content, "utf8"));
           skills.push({
             id,
             name: front.name ?? skillTitle(id),
@@ -318,13 +328,37 @@ export default Plugin.define({
     try {
       track(
         await ctx.session.hook("prompt", async (event) => {
-          try {
-            if (PHP_TRIGGER.test(event.prompt.text)) {
-              event.metadata = { ...(event.metadata ?? {}), "php-toolkit": true };
+          const explicit = event.prompt.skills ?? [];
+          const result = await runRoutingSafely(
+            () =>
+              runRouting(
+                ctx,
+                {
+                  sessionID: event.sessionID,
+                  text: event.prompt.text,
+                  files: (event.prompt.files ?? []).map((file) => file.name ?? file.uri ?? ""),
+                  skills: explicit,
+                },
+                config,
+                profileCache,
+                sessions,
+                contentLengths,
+                metrics,
+              ),
+            explicit,
+          );
+          if (result.error) {
+            console.error(`[php-toolkit] routing failed: ${result.error}`);
+          }
+          // Router attachments are plain IDs; the host brand is only a type-level marker.
+          event.prompt.skills = [...explicit, ...result.attach] as typeof event.prompt.skills;
+          if (PHP_TRIGGER.test(event.prompt.text)) {
+            event.metadata = { ...(event.metadata ?? {}), "php-toolkit": true };
+            try {
               await metrics.active.recordTrigger();
+            } catch (err) {
+              console.error(`[php-toolkit] trigger metrics failed: ${(err as Error).message}`);
             }
-          } catch {
-            // never break admission
           }
         }),
       );
