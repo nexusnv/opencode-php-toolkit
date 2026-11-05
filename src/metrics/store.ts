@@ -28,7 +28,50 @@ export type CommandMetricEntry = {
   lastUsedAt: string;
 };
 
-export type PhpToolkitMetrics = {
+export interface EntryCounter {
+  count: number;
+  lastUsedAt: string;
+}
+
+export interface RoutingMetrics {
+  selections: Record<string, EntryCounter>;
+  activations: Record<string, EntryCounter>;
+  unactivated: Record<string, number>;
+  intents: Record<string, number>;
+  concerns: Record<string, number>;
+  dropped: Record<string, number>;
+  taskGenerations: number;
+  continuations: number;
+  resets: number;
+  announcements: number;
+}
+
+export interface VerificationMetrics {
+  runs: number;
+  passed: number;
+  failed: number;
+  warning: number;
+  skipped: number;
+  partial: number;
+  unavailable: number;
+  error: number;
+  timedOut: number;
+  cancelled: number;
+  findings: number;
+  lastRunAt: string | null;
+}
+
+export interface ScannerMetrics {
+  runs: number;
+  findings: number;
+  hypotheses: number;
+  truncated: number;
+  cacheHits: number;
+  cacheModes: { content: number; metadata: number };
+  lastRunAt: string | null;
+}
+
+export interface PhpToolkitMetrics {
   version: number;
   startedAt: string;
   /** Basename of the project root - display only. */
@@ -39,9 +82,67 @@ export type PhpToolkitMetrics = {
   commands: Record<string, CommandMetricEntry>;
   /** Prompts that mentioned the PHP ecosystem. */
   triggerHits: number;
-};
+  routing: RoutingMetrics;
+  verification: VerificationMetrics;
+  scanner: ScannerMetrics;
+}
 
-export const METRICS_VERSION = 2;
+export type RoutingMetricEvent =
+  | { kind: "selected"; skill: string }
+  | { kind: "activated"; skill: string }
+  | { kind: "unactivated"; skill: string }
+  | { kind: "dropped"; reason: string }
+  | { kind: "intents"; values: string[] }
+  | { kind: "concerns"; values: string[] }
+  | { kind: "task-generation" }
+  | { kind: "continuation" }
+  | { kind: "reset" };
+
+export const METRICS_VERSION = 3;
+
+export function emptyRoutingMetrics(): RoutingMetrics {
+  return {
+    selections: {},
+    activations: {},
+    unactivated: {},
+    intents: {},
+    concerns: {},
+    dropped: {},
+    taskGenerations: 0,
+    continuations: 0,
+    resets: 0,
+    announcements: 0,
+  };
+}
+
+export function emptyVerificationMetrics(): VerificationMetrics {
+  return {
+    runs: 0,
+    passed: 0,
+    failed: 0,
+    warning: 0,
+    skipped: 0,
+    partial: 0,
+    unavailable: 0,
+    error: 0,
+    timedOut: 0,
+    cancelled: 0,
+    findings: 0,
+    lastRunAt: null,
+  };
+}
+
+export function emptyScannerMetrics(): ScannerMetrics {
+  return {
+    runs: 0,
+    findings: 0,
+    hypotheses: 0,
+    truncated: 0,
+    cacheHits: 0,
+    cacheModes: { content: 0, metadata: 0 },
+    lastRunAt: null,
+  };
+}
 
 /** Storage keys are `${STORAGE_PREFIX}${projectKey(path)}` - one doc per project. */
 export const STORAGE_PREFIX = "php-toolkit.metrics.";
@@ -98,6 +199,9 @@ function initialMetrics(project: MetricsProject): PhpToolkitMetrics {
     tools: {},
     commands: {},
     triggerHits: 0,
+    routing: emptyRoutingMetrics(),
+    verification: emptyVerificationMetrics(),
+    scanner: emptyScannerMetrics(),
   };
 }
 
@@ -151,6 +255,95 @@ function migrateCommands(raw: unknown): Record<string, CommandMetricEntry> {
   return out;
 }
 
+function migrateCounters(raw: unknown): Record<string, number> {
+  if (!raw || typeof raw !== "object") return {};
+  const out: Record<string, number> = {};
+  for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+    out[name] = nonNegative(num(value));
+    if (Object.keys(out).length >= MAX_ENTRIES) break;
+  }
+  return out;
+}
+
+function migrateEntryCounters(raw: unknown): Record<string, EntryCounter> {
+  if (!raw || typeof raw !== "object") return {};
+  const out: Record<string, EntryCounter> = {};
+  for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const entry = value as Record<string, unknown>;
+    out[name] = {
+      count: nonNegative(num(entry.count)),
+      lastUsedAt: typeof entry.lastUsedAt === "string" ? entry.lastUsedAt : "",
+    };
+    if (Object.keys(out).length >= MAX_ENTRIES) break;
+  }
+  return out;
+}
+
+function migrateRouting(raw: unknown): RoutingMetrics {
+  const base = emptyRoutingMetrics();
+  if (!raw || typeof raw !== "object") return base;
+  const candidate = raw as Record<string, unknown>;
+  return {
+    selections: migrateEntryCounters(candidate.selections),
+    activations: migrateEntryCounters(candidate.activations),
+    unactivated: migrateCounters(candidate.unactivated),
+    intents: migrateCounters(candidate.intents),
+    concerns: migrateCounters(candidate.concerns),
+    dropped: migrateCounters(candidate.dropped),
+    taskGenerations: nonNegative(num(candidate.taskGenerations)),
+    continuations: nonNegative(num(candidate.continuations)),
+    resets: nonNegative(num(candidate.resets)),
+    announcements: nonNegative(num(candidate.announcements)),
+  };
+}
+
+function migrateVerification(raw: unknown): VerificationMetrics {
+  const base = emptyVerificationMetrics();
+  if (!raw || typeof raw !== "object") return base;
+  const candidate = raw as Record<string, unknown>;
+  const result: VerificationMetrics = { ...base };
+  for (const key of [
+    "runs",
+    "passed",
+    "failed",
+    "warning",
+    "skipped",
+    "partial",
+    "unavailable",
+    "error",
+    "timedOut",
+    "cancelled",
+    "findings",
+  ] as const) {
+    result[key] = nonNegative(num(candidate[key]));
+  }
+  result.lastRunAt = typeof candidate.lastRunAt === "string" ? candidate.lastRunAt : null;
+  return result;
+}
+
+function migrateScanner(raw: unknown): ScannerMetrics {
+  const base = emptyScannerMetrics();
+  if (!raw || typeof raw !== "object") return base;
+  const candidate = raw as Record<string, unknown>;
+  const modes =
+    candidate.cacheModes && typeof candidate.cacheModes === "object"
+      ? (candidate.cacheModes as Record<string, unknown>)
+      : {};
+  return {
+    runs: nonNegative(num(candidate.runs)),
+    findings: nonNegative(num(candidate.findings)),
+    hypotheses: nonNegative(num(candidate.hypotheses)),
+    truncated: nonNegative(num(candidate.truncated)),
+    cacheHits: nonNegative(num(candidate.cacheHits)),
+    cacheModes: {
+      content: nonNegative(num(modes.content)),
+      metadata: nonNegative(num(modes.metadata)),
+    },
+    lastRunAt: typeof candidate.lastRunAt === "string" ? candidate.lastRunAt : null,
+  };
+}
+
 /**
  * Turns whatever is on disk into a valid document. Documents from a newer
  * format are reported as unsupported so the caller can refuse to write over
@@ -175,6 +368,9 @@ export function deserialize(
       tools: migrateTools(candidate.tools),
       commands: migrateCommands(candidate.commands),
       triggerHits: nonNegative(num(candidate.triggerHits)),
+      routing: migrateRouting(candidate.routing),
+      verification: migrateVerification(candidate.verification),
+      scanner: migrateScanner(candidate.scanner),
     },
   };
 }
@@ -184,17 +380,34 @@ export type MetricsDelta = {
   tools: Record<string, { runs: number; ok: number; error: number; findings: number; lastUsedAt: string; lastStatus: ToolRunStatus | null }>;
   commands: Record<string, { count: number; lastUsedAt: string }>;
   triggerHits: number;
+  routing: RoutingMetrics;
 };
 
 function emptyDelta(): MetricsDelta {
-  return { tools: {}, commands: {}, triggerHits: 0 };
+  return { tools: {}, commands: {}, triggerHits: 0, routing: emptyRoutingMetrics() };
+}
+
+function isEmptyRouting(routing: RoutingMetrics): boolean {
+  return (
+    Object.keys(routing.selections).length === 0 &&
+    Object.keys(routing.activations).length === 0 &&
+    Object.keys(routing.unactivated).length === 0 &&
+    Object.keys(routing.intents).length === 0 &&
+    Object.keys(routing.concerns).length === 0 &&
+    Object.keys(routing.dropped).length === 0 &&
+    routing.taskGenerations === 0 &&
+    routing.continuations === 0 &&
+    routing.resets === 0 &&
+    routing.announcements === 0
+  );
 }
 
 function isEmptyDelta(delta: MetricsDelta): boolean {
   return (
     delta.triggerHits === 0 &&
     Object.keys(delta.tools).length === 0 &&
-    Object.keys(delta.commands).length === 0
+    Object.keys(delta.commands).length === 0 &&
+    isEmptyRouting(delta.routing)
   );
 }
 
@@ -202,6 +415,98 @@ function later<T extends { lastUsedAt: string }>(a: T, b: T): T {
   // Strictly greater: on a timestamp tie, b (the delta recorded later by
   // mergeDelta's caller) wins, so the newest status survives a merge.
   return a.lastUsedAt > b.lastUsedAt ? a : b;
+}
+
+function addCounters(a: Record<string, number>, b: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [name, value] of Object.entries(a)) out[name] = value;
+  for (const [name, value] of Object.entries(b)) out[name] = (out[name] ?? 0) + value;
+  return out;
+}
+
+function addEntryCounters(
+  a: Record<string, EntryCounter>,
+  b: Record<string, EntryCounter>,
+): Record<string, EntryCounter> {
+  const out: Record<string, EntryCounter> = {};
+  for (const [name, value] of Object.entries(a)) out[name] = { ...value };
+  for (const [name, value] of Object.entries(b)) {
+    const current = out[name];
+    out[name] = current
+      ? { count: current.count + value.count, lastUsedAt: later(current, value).lastUsedAt }
+      : { ...value };
+  }
+  return out;
+}
+
+export function mergeRoutingMetrics(a: RoutingMetrics, b: RoutingMetrics): RoutingMetrics {
+  return {
+    selections: addEntryCounters(a.selections, b.selections),
+    activations: addEntryCounters(a.activations, b.activations),
+    unactivated: addCounters(a.unactivated, b.unactivated),
+    intents: addCounters(a.intents, b.intents),
+    concerns: addCounters(a.concerns, b.concerns),
+    dropped: addCounters(a.dropped, b.dropped),
+    taskGenerations: a.taskGenerations + b.taskGenerations,
+    continuations: a.continuations + b.continuations,
+    resets: a.resets + b.resets,
+    announcements: a.announcements + b.announcements,
+  };
+}
+
+function bumpCounter(target: Record<string, number>, key: string): void {
+  if (target[key] !== undefined) {
+    target[key] += 1;
+    return;
+  }
+  if (Object.keys(target).length < MAX_ENTRIES) target[key] = 1;
+}
+
+function bumpEntryCounter(target: Record<string, EntryCounter>, key: string, now: string): void {
+  const existing = target[key];
+  if (existing) {
+    existing.count += 1;
+    existing.lastUsedAt = now;
+    return;
+  }
+  if (Object.keys(target).length < MAX_ENTRIES) target[key] = { count: 1, lastUsedAt: now };
+}
+
+/** Applies one routing event to a counter document. */
+export function applyRoutingEvent(
+  target: RoutingMetrics,
+  event: RoutingMetricEvent,
+  now: string,
+): void {
+  switch (event.kind) {
+    case "selected":
+      bumpEntryCounter(target.selections, event.skill, now);
+      break;
+    case "activated":
+      bumpEntryCounter(target.activations, event.skill, now);
+      break;
+    case "unactivated":
+      bumpCounter(target.unactivated, event.skill);
+      break;
+    case "dropped":
+      bumpCounter(target.dropped, event.reason);
+      break;
+    case "intents":
+      for (const value of event.values) bumpCounter(target.intents, value);
+      break;
+    case "concerns":
+      for (const value of event.values) bumpCounter(target.concerns, value);
+      break;
+    case "task-generation":
+      target.taskGenerations += 1;
+      break;
+    case "continuation":
+      target.continuations += 1;
+      break;
+    case "reset":
+      target.resets += 1;
+      break;
+  }
 }
 
 /**
@@ -241,7 +546,12 @@ export function mergeDelta(a: MetricsDelta, b: MetricsDelta): MetricsDelta {
       lastUsedAt: later(cur, e).lastUsedAt,
     };
   }
-  return { tools, commands, triggerHits: a.triggerHits + b.triggerHits };
+  return {
+    tools,
+    commands,
+    triggerHits: a.triggerHits + b.triggerHits,
+    routing: mergeRoutingMetrics(a.routing, b.routing),
+  };
 }
 
 /** Applies pending increments to a document, producing the merged view. */
@@ -284,6 +594,7 @@ function applyDelta(base: PhpToolkitMetrics, delta: MetricsDelta): PhpToolkitMet
     tools,
     commands,
     triggerHits: base.triggerHits + delta.triggerHits,
+    routing: mergeRoutingMetrics(base.routing ?? emptyRoutingMetrics(), delta.routing),
   };
 }
 
@@ -420,6 +731,11 @@ export class MetricsStore {
 
   async recordTrigger(): Promise<void> {
     this.delta.triggerHits += 1;
+    this.markDirty();
+  }
+
+  async recordRouting(event: RoutingMetricEvent): Promise<void> {
+    applyRoutingEvent(this.delta.routing, event, new Date().toISOString());
     this.markDirty();
   }
 

@@ -3,6 +3,7 @@ import {
   LEGACY_STORAGE_KEY,
   MetricsStore,
   deserialize,
+  emptyRoutingMetrics,
   mergeDelta,
   projectKey,
   storageKeyFor,
@@ -52,7 +53,7 @@ describe("deserialize", () => {
     for (const raw of [undefined, null, "nope", 42, []]) {
       const { metrics, supported } = deserialize(raw, PROJECT);
       expect(supported).toBe(true);
-      expect(metrics.version).toBe(2);
+      expect(metrics.version).toBe(3);
       expect(metrics.tools).toEqual({});
       expect(metrics.commands).toEqual({});
       expect(metrics.triggerHits).toBe(0);
@@ -93,7 +94,7 @@ describe("deserialize", () => {
       PROJECT,
     );
     expect(supported).toBe(true);
-    expect(metrics.version).toBe(2);
+    expect(metrics.version).toBe(3);
     expect(metrics.startedAt).toBe("2026-01-01T00:00:00.000Z");
     expect(metrics.triggerHits).toBe(4);
     expect(metrics.tools.php_lint).toEqual({
@@ -489,7 +490,7 @@ describe("MetricsStore", () => {
     await store.recordTrigger();
     const ok = await store.reset();
     expect(ok).toBe(true);
-    expect(set).toHaveBeenCalledWith(key, expect.objectContaining({ version: 2, triggerHits: 0 }));
+    expect(set).toHaveBeenCalledWith(key, expect.objectContaining({ version: 3, triggerHits: 0 }));
     expect((data.get(key) as { triggerHits: number }).triggerHits).toBe(0);
     expect(store.getSnapshot().triggerHits).toBe(0);
 
@@ -614,6 +615,7 @@ describe("mergeDelta", () => {
       tools: { php_lint: entry(tool.runs, tool.ok, tool.status) },
       commands: {},
       triggerHits: 1,
+      routing: emptyRoutingMetrics(),
     });
 
     const merged = mergeDelta(delta({ runs: 1, ok: 1, status: "ok" }), delta({ runs: 2, ok: 0, status: "error" }));

@@ -49,6 +49,21 @@ function commandLines(metrics: PhpToolkitMetrics): string[] {
   );
 }
 
+function routingLines(metrics: PhpToolkitMetrics): string[] {
+  const routing = metrics.routing;
+  const mostSelected = Object.entries(routing.selections)
+    .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))
+    .slice(0, 3)
+    .map(([name, entry]) => `${name} (${entry.count})`);
+  const activations = Object.values(routing.activations).reduce((sum, entry) => sum + entry.count, 0);
+  const dropped = Object.values(routing.dropped).reduce((sum, count) => sum + count, 0);
+  return [
+    `    generations ${routing.taskGenerations}   continuations ${routing.continuations}   resets ${routing.resets}`,
+    `    most selected   ${mostSelected.length ? mostSelected.join(", ") : "none"}`,
+    `    activations     ${activations}                 dropped ${dropped}`,
+  ];
+}
+
 /** Result of the machine-wide scan, including whether it could be completed. */
 export type ProjectScan = {
   projects: PhpToolkitMetrics[];
@@ -118,6 +133,9 @@ export function formatMetricsSnapshot(m: PhpToolkitMetrics, scan?: ProjectScan):
     "",
     "  Commands",
     ...commandLines(m),
+    "",
+    "  Routing",
+    ...routingLines(m),
     "",
     `  Impact: ${plural(findings, "issue")} surfaced by the toolkit in this project.`,
   ];

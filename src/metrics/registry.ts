@@ -1,6 +1,13 @@
 import { realpathSync } from "node:fs";
 import { basename, resolve, sep } from "node:path";
-import { MetricsStore, type MetricsProject, type MetricsStorage } from "./store.js";
+import {
+  MetricsStore,
+  type MetricsProject,
+  type MetricsStorage,
+  type RoutingMetricEvent,
+} from "./store.js";
+
+export type { RoutingMetricEvent } from "./store.js";
 
 function tryRealpath(path: string): string {
   try {
@@ -67,6 +74,13 @@ export class MetricsRegistry {
   /** Loads the active project's document. */
   async initActive(): Promise<void> {
     await this.active.init();
+  }
+
+  /** Records one routing event against the active project. */
+  async recordRouting(event: RoutingMetricEvent): Promise<void> {
+    const store = this.active;
+    if (!store) return;
+    await store.recordRouting(event);
   }
 
   /** Writes pending changes for every known project. */
