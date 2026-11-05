@@ -46,9 +46,10 @@ hidden via `disable-model-invocation` and backed by `references/`. It proved tha
 skills can be attached by ID without appearing in the model's advertised list. This design
 generalizes that prototype into a two-dimensional router and a problem-first library.
 
-The latest improvement branch also adds `php_composer_outdated`, `php_static_analysis`,
-`php_test` and a richer `php_project_detect` (analyzer/fixer config files, `platform.php`).
-The verification layer composes these tools; it does not reimplement their parsing.
+PR #4 (merged in `4011468`) also adds `php_composer_outdated`, `php_static_analysis`,
+`php_test` and a richer `php_project_detect` (analyzer/fixer config files, `platform.php`);
+these are present on `main`. The verification layer composes these tools; it does not
+reimplement their parsing.
 
 ### Goals
 
@@ -1403,7 +1404,7 @@ New:
 
 ### Tools
 
-Existing on the latest improvement branch:
+Existing on `main` (merged via PR #4):
 
 `php_project_detect`, `php_lint`, `php_composer_audit`, `php_composer_outdated`,
 `php_static_analysis`, `php_test`, `php_metrics`.
@@ -1898,15 +1899,17 @@ Acceptance:
 | Pattern-library scope | Four P0 core pattern skills; five promoted in P1; the long tail remains references. Promotion requires demonstrated benefit. |
 | Automatic architecture scanning | `architectureScan: "auto"` remains opt-in and bounded; the default is on-demand. |
 | TUI notifications | Deferred. No synthetic messages are used to announce routing. |
+| Instruction entries (`session.instructions.entry`) | Deferred, experimental. Phase 1 uses context-hook system parts on the locked `@opencode/plugin@2.0.26`. `@opencode/plugin@2.2.5` exposes keyed entries experimentally; adoption needs a deliberate dependency bump, a spike and no change to the state model (Section 19, item 14). |
 | LLM-assisted classification | Deferred to Phase 7. Deterministic routing remains the default. |
 | Architecture drift detection | Phase 6, P2. |
 | Framework-specific rules | Out of scope; sibling toolkits own Laravel/Symfony/WordPress specifics. |
 
 ## 17. Migration and compatibility
 
-- Start implementation from the latest improvement branch (or `main` after PR #4) so
-  `php_test`, `php_static_analysis`, `php_composer_outdated` and the enriched
-  `php_project_detect` are present. Do not reimplement them in the router.
+- Start implementation from `main` after PR #4 (merged); do not rely on an unmerged
+  improvement branch. The four required tools (`php_test`, `php_static_analysis`,
+  `php_composer_outdated`, enriched `php_project_detect`) are present and composable
+  there — verified 2026-11-04. Do not reimplement them in the router.
 - Existing skill IDs, command names, tool names and agent files remain valid.
 - Existing behavior is available through `autoSkills: "off"`.
 - `PHP_SYSTEM_HINT` is replaced by the L0 constitution; the PHP-specific defaults are
@@ -1930,6 +1933,7 @@ Acceptance:
 | --- | --- |
 | Prompt hook cannot attach hidden skills as expected. | Validate in Phase 1; fallback to an advertised `php-design-patterns` router skill + references. |
 | Context system parts are not visible, are overwritten, or do not survive compaction. | Validate in Phase 1; L0 is a stable system part and state is re-rendered on every primary context request; `ctx.storage` plus the last user message provide recovery. |
+| Keyed instruction entries are experimental and absent from the locked `@opencode/plugin@2.0.26` | Context-hook system parts remain the transport; entries are an optional follow-up gated on a deliberate dependency bump to 2.2.x and a spike (Section 19, item 14). |
 | Application misclassified as a library because Composer omits `type`. | Missing `type` is neutral; multi-signal scoring with confidence; fixtures for app-without-type and package-without-type. |
 | Concerns accumulate across unrelated tasks. | Task generations; concerns recomputed on a new task; merge only for confirmed continuations; no leakage target in the scorecard. |
 | Routing is too eager or too blunt. | Precision over recall, fixed thresholds, explicit wins, corpus tests, task boundaries. |
@@ -1953,7 +1957,9 @@ Acceptance:
 
 ## 19. Validation assumptions
 
-These are validated in Phase 1 before the pattern library is built:
+These are validated in Phase 1 before the pattern library is built. Items 10 and 12 were
+verified 2026-11-04 against the installed `@opencode/plugin@2.0.26` /
+`@opencode/client@2.0.26`; the rest remain Phase 1 gates.
 
 1. `event.prompt.skills` attaches skill bodies through the normal resolution path.
 2. A skill with `autoinvoke: false` (or the equivalent `disable-model-invocation: true`
@@ -1975,16 +1981,37 @@ These are validated in Phase 1 before the pattern library is built:
 10. `ctx.vcs.status({ location: { directory } })` reports working-tree entries including
     staged, unstaged and untracked changes as `added`/`modified`/`deleted`; a no-VCS
     repository returns an error or empty result that can be distinguished from a clean
-    working tree.
+    working tree. Verified against the installed `@opencode/client@2.0.26`: the response
+    is `{ location, data: [{ file, additions, deletions, status }] }`, with `status` one
+    of `added`/`modified`/`deleted`.
 11. Prompt hooks run for command-submitted prompts (`ctx.session.prompt`).
-12. The latest improvement branch's `php_test`, `php_static_analysis`,
+12. The tools added in PR #4 — `php_test`, `php_static_analysis`,
     `php_composer_outdated` and enriched `php_project_detect` are available to compose.
+    Satisfied on `main` after PR #4 (merged `4011468`) — verified 2026-11-04: the four
+    tools exist in `src/index.ts`/`src/tools/php-tools.ts`, and `detectPhpProject`
+    reads analyzer/fixer config files and `config.platform.php`.
 13. The hidden-skill prototype's registration path is reusable; if not, the router falls
     back to an advertised `php-design-patterns` skill with references.
-14. The plugin context does not expose `session.instructions.entry` in
-    `@opencode/plugin@2.0.26`. The design does not depend on it. If a later plugin API
-    exposes keyed instruction entries, they may replace the state system part without
-    changing the state model.
+14. Instruction entries (keyed context blocks announced at the next step boundary, without a
+    message turn) are exposed only experimentally by newer plugins, and the locked plugin
+    does not expose them. Verified 2026-11-04:
+    - `@opencode/plugin@2.0.26` (the version pinned by `package.json` and the lockfile)
+      does not surface `session.instructions` in its curated `SessionDomain`; its
+      `Pick<SessionApi, ...>` omits it. The underlying `@opencode/client@2.0.26`
+      generated API does contain `session.instructions.entry.list/put/remove`
+      (`SessionInstructionsEntry{List,Put,Remove}Input`) but the plugin context does
+      not forward it.
+    - `@opencode/plugin@2.2.5` (latest; also what a fresh install of `^2.0.26` resolves
+      to) exposes `ctx.session.instructions` as `Pick<ExperimentalSessionApi, "wait" |
+      "instructions">` — an explicitly experimental API. Because it is experimental and
+      version-sensitive, the locked 2.0.26 remains the Phase 1 contract: the state
+      system part (context hook) stays the transport, and a fresh install must not
+      silently change behavior.
+    - Adopting keyed entries is a follow-up that requires (i) a deliberate dependency bump,
+      (ii) a spike confirming `put`/`remove` semantics, key budgets and ordering against
+      the L0 constitution, and (iii) no change to the state model. Because it removes the
+      per-turn system-part rewrite entirely, it is preferred once proven — but Phase 1
+      does not depend on it.
 15. `Session.Info.permissions` and `session.permissions` events expose skill rules in a
     shape the plugin can interpret (`action: "skill"`, resource matching the skill ID). If
     not, unactivated skills remain `pending` and activation remains the only proof.
@@ -2010,8 +2037,9 @@ adjusted before implementation proceeds.
 - The compaction hook is separate from the context hook and does not inject task state.
 - Project profiles and routing state are per session root, not per plugin install.
 - Model-facing state uses context-hook system parts; persistence uses `ctx.storage`
-  best-effort. The design does not depend on the unavailable plugin `session.instructions.entry`
-  API.
+  best-effort. The design does not depend on keyed instruction entries, which the locked
+  `@opencode/plugin@2.0.26` does not expose; 2.2.x exposes them experimentally as a
+  gated follow-up (Section 19, item 14).
 - Selected, attached, activated, pending, awaiting-approval and denied skills are distinct;
   only activation suppresses re-attachment for the task, and denial is cleared by a
   permissions change.
