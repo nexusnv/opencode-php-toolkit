@@ -7,11 +7,17 @@ import { MetricsRegistry, resolveProjectScope } from "./metrics/registry.js";
 import type { MetricsProject } from "./metrics/store.js";
 import { formatMetricsSnapshot } from "./metrics/format.js";
 import { PHP_TRIGGER, isDestructiveShell } from "./hooks/php-context.js";
-import { L0_CONSTITUTION } from "./constitution.js";
 import { readToolkitConfig } from "./config.js";
 import { ProjectProfileCache } from "./profile.js";
 import { runRouting, runRoutingSafely } from "./routing/orchestrator.js";
 import type { SessionRoutingState } from "./routing/types.js";
+import { getRoutingRenderContext } from "./routing/state.js";
+import {
+  l0Part,
+  removePhpToolkitParts,
+  renderToolkitStatePart,
+  statePart,
+} from "./context/parts.js";
 
 function skillTitle(id: string): string {
   return id
@@ -364,9 +370,21 @@ export default Plugin.define({
       );
       track(
         await ctx.session.hook("context", (event) => {
-          event.system.push({ type: "text", text: L0_CONSTITUTION });
+          event.system = removePhpToolkitParts(event.system);
+          event.system.push(l0Part());
+          const render = getRoutingRenderContext(event.sessionID);
+          if (render && render.state.taskGeneration > 0) {
+            try {
+              event.system.push(statePart(renderToolkitStatePart(render)));
+            } catch (err) {
+              console.error(`[php-toolkit] context render failed: ${(err as Error).message}`);
+            }
+          }
         }),
       );
+      track(await ctx.session.hook("compaction", () => {}));
+      track(await ctx.session.hook("title", () => {}));
+      track(await ctx.session.hook("generate", () => {}));
       track(
         await ctx.tool.hook("execute.before", (event) => {
           const hit = isDestructiveShell((event as { input?: unknown }).input);
