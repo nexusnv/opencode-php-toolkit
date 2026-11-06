@@ -185,6 +185,7 @@ export const INTENT_SIGNALS: readonly SignalEntry[] = [
       "timeout",
       "flaky",
       "intermittent",
+      "intermittently",
       "wrong output",
       "unexpected behavior",
     ],
