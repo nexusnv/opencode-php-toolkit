@@ -16,7 +16,7 @@ Published package (after `npm publish`):
 // opencode.jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["opencode-php-toolkit@0.1.1"]
+  "plugins": ["opencode-php-toolkit@0.2.0"]
 }
 ```
 
@@ -34,7 +34,7 @@ as-is; always run `npm run build` before committing):
 # Latest on main
 opencode plugin add github:nexusnv/opencode-php-toolkit
 # Pinned (recommended for teams)
-opencode plugin add github:nexusnv/opencode-php-toolkit#v0.1.1
+opencode plugin add github:nexusnv/opencode-php-toolkit#v0.2.0
 ```
 
 Or per-project in `opencode.jsonc` (same spec forms, plus branch/commit):
@@ -42,7 +42,7 @@ Or per-project in `opencode.jsonc` (same spec forms, plus branch/commit):
 ```jsonc
 {
   "plugins": [
-    "github:nexusnv/opencode-php-toolkit#v0.1.1",
+    "github:nexusnv/opencode-php-toolkit#v0.2.0",
     "github:nexusnv/opencode-php-toolkit#main",
     "git+ssh://git@github.com/nexusnv/opencode-php-toolkit.git#6eb66d4"
   ]
@@ -72,7 +72,7 @@ opencode plugin add file:///home/leonidas/dev/nexusnv/opencode-php-toolkit
 
 - Agents (`agents/php-*.md`, `mode: subagent`): `php-reviewer`, `php-debugger`, `php-modernizer`, `php-tester`. On install, the package's `postinstall` script copies these four files into `~/.config/opencode/agents/` as a convenience, never overwriting files that already exist (v2 `AgentEditor` has no `add`; transforms can't create agents — files are the source of truth). Set `PHP_TOOLKIT_SKIP_AGENT_COPY=1` in the environment to opt out. The script writes nothing besides those four files (the OpenCode `commands/` directory is not touched). To undo after install, delete `php-reviewer.md`, `php-debugger.md`, `php-modernizer.md` and `php-tester.md` from `~/.config/opencode/agents/`.
 - Skills (8, autoinvoke): `php-standards`, `php-static-analysis`, `php-testing`, `php-security`, `php-modernize`, `php-composer`, `php-architecture`, `php-debug`.
-- Commands (7): `/php-review`, `/php-analyze`, `/php-fix-style`, `/php-test`, `/php-audit`, `/php-upgrade`, `/php-scaffold`.
+- Commands (8): `/php-review`, `/php-analyze`, `/php-fix-style`, `/php-test`, `/php-audit`, `/php-upgrade`, `/php-scaffold`, `/php-toolkit-status`.
 - Tools (`php_*` namespace, read-only unless noted):
   - `php_project_detect` — composer intel incl. analyzer/fixer config files and `composer config.platform.php`; no exec
   - `php_lint` — `php -l` + `composer validate`
@@ -81,7 +81,64 @@ opencode plugin add file:///home/leonidas/dev/nexusnv/opencode-php-toolkit
   - `php_static_analysis` — PHPStan (or Psalm when absent), JSON output; analysis errors count as findings; **executes project-configured code** (analyzer binaries run bootstrap files, autoload and Psalm plugins with this session's privileges)
   - `php_test` — runs `vendor/bin/pest` or `vendor/bin/phpunit` against JUnit output; **executes project code** (tests only, 300s timeout, never a bare PATH binary)
   - `php_metrics` — local usage metrics; `reset: true` clears this project's metrics, `export: true` dumps the snapshot as raw JSON (absolute project path omitted)
-- Hooks: `prompt` tags PHP context, `context` adds typed-PHP system hint (only when the project has a `composer.json` or the request's user messages mention PHP — no tokens spent on unrelated sessions), `tool.execute.before` warns on destructive `composer update` / `rector process` without `--dry-run` / `php-cs-fixer fix` without `--dry-run`.
+- Hooks: `prompt` runs deterministic routing for PHP-context prompts, `context` adds the stable L0 engineering constitution plus one compact routing-state part, `tool.execute.before` warns on destructive `composer update` / `rector process` without `--dry-run` / `php-cs-fixer fix` without `--dry-run`.
+
+## Reactive routing (0.2.0)
+
+Routing is deterministic, silent and risk-based by default. The plugin classifies each
+PHP-context prompt into at most two intents (Build, Design, Review, Debug, Test, Maintain)
+and three concerns (Security, Testing, Debugging, Static analysis, Architecture, Design
+patterns, Coding standards, Dependencies), then attaches up to three of the eight existing
+skills. No pattern skills ship in this phase. Non-PHP prompts attach nothing.
+
+Attached is not loaded. `/php-toolkit-status` reports `selected`, `attached` and
+`activated` separately; only a `session.skill.activated` event proves a skill loaded.
+OpenCode still enforces skill permissions: a denied router skill is recorded but never
+attached, and an `ask` skill is attached once while the host owns approval.
+
+```
+PHP toolkit status
+  Project: /work/app (application, high confidence, PHP ^8.3, PHPUnit + PHPStan, no framework)
+  Root: /work/app (subpath: none)
+  Task: generation 2
+  Active: build | concerns: testing, security
+  Selected: php-testing, php-security
+  Attached: php-testing, php-security
+  Activated: php-testing
+  Pending: php-security
+  Dropped: php-standards (budget:max-skills)
+  Reasons: intent:build, concern:testing, concern:security, budget:max-skills
+  Mode: risk | scan: off | announce: off
+  Verify: unavailable (Phase 3)
+```
+
+`selected` is what the classifier chose, `attached` is what was merged into the
+prompt, `activated` is what the host confirmed loaded, and `pending` lists attached
+skills still waiting for activation. `Reasons` contains intent/concern labels and
+drop reasons only — never prompt text.
+
+```jsonc
+{
+  "plugins": [{
+    "package": "opencode-php-toolkit",
+    "options": {
+      "autoSkills": "attach",
+      "maxSkills": 3,
+      "maxSkillChars": 12000,
+      "architectureMode": "risk",
+      "announceSelections": "off"
+    }
+  }]
+}
+```
+
+Escape hatches:
+
+- `autoSkills: "hint"` records recommendations without attaching them.
+- `autoSkills: "off"` restores passive behavior; the L0 constitution remains active.
+- `architectureMode: "off"` disables design gating.
+- `announceSelections` remains `off` by default; routing uses no synthetic announcement
+  messages.
 
 ## Local metrics
 
@@ -100,6 +157,11 @@ PHP toolkit metrics (local-only, never leaves this machine)
 
   Commands
     php-review           2 invocations   last 2026-10-21 09:15Z
+
+  Routing
+    generations 3   continuations 1   resets 3
+    most selected   php-testing (4), php-security (2)
+    activations     3                 dropped 1
 
   Impact: 2 issues surfaced by the toolkit in this project.
 ```
@@ -132,8 +194,13 @@ Metrics themselves never leave your machine:
 
 - Metrics are written to OpenCode's local storage only
   (`~/.local/share/opencode/opencode.db`, key `php-toolkit.metrics.<hash>`).
+- Session routing state is written to the same local storage under
+  `php-toolkit:session:<sessionID>`: project profile summary, task generation,
+  intent/concern labels and skill IDs. It never stores prompt text, file contents or
+  code. The stored document retains the local project root for scope validation; the
+  model-facing state part contains no absolute path.
 - The plugin makes no outbound requests of its own.
-- Only counts, timestamps and the project path are recorded — never file
+- Only counts, timestamps, routing labels and the project path are recorded — never file
   contents, file names, code or prompt text.
 
 Two things worth knowing precisely:
@@ -189,8 +256,14 @@ src/index.ts — Plugin.define entry
 src/content.ts — markdown loader + skill/command manifests
 src/tools/detect.ts — composer.json intel, no exec
 src/tools/php-tools.ts — php -l, composer validate/audit/outdated, static analysis (phpstan/psalm), test runner (phpunit/pest); timeouts + AbortSignal throughout; each returns its own outcome + findings
-src/hooks/php-context.ts — system hint, triggers, destructive-pattern guard
-src/metrics/store.ts — per-project metrics document (storage, migration, merged writes)
+src/constitution.ts — stable L0 engineering constitution
+src/config.ts — plugin options with safe defaults
+src/profile.ts — per-session project profile (application/library confidence, tools, layout)
+src/routing/ — deterministic classifier, selector, task boundary, session state, persistence, permissions and orchestrator
+src/context/parts.ts — L0 and compact routing-state system parts
+src/status/toolkit-status.ts — `/php-toolkit-status` snapshot
+src/hooks/php-context.ts — PHP triggers and destructive-pattern guard
+src/metrics/store.ts — per-project metrics v3 document (storage, migration, merged writes)
 src/metrics/registry.ts — one document per project, work attributed to the right one
 src/metrics/format.ts — snapshot rendering
 agents/php-*.md, commands/php-*.md, skills/php-*/SKILL.md

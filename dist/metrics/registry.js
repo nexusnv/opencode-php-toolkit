@@ -1,6 +1,6 @@
 import { realpathSync } from "node:fs";
 import { basename, resolve, sep } from "node:path";
-import { MetricsStore } from "./store.js";
+import { MetricsStore, } from "./store.js";
 function tryRealpath(path) {
     try {
         return realpathSync(path);
@@ -63,6 +63,13 @@ export class MetricsRegistry {
     /** Loads the active project's document. */
     async initActive() {
         await this.active.init();
+    }
+    /** Records one routing event against the active project. */
+    async recordRouting(event) {
+        const store = this.active;
+        if (!store)
+            return;
+        await store.recordRouting(event);
     }
     /** Writes pending changes for every known project. */
     async flushAll() {

@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { Plugin } from "@opencode/plugin";
 import { COMMAND_DEFS, SKILL_IDS, PKG_ROOT, loadText, parseFrontmatter } from "./content.js";
@@ -6,16 +5,15 @@ import { detectPhpProject, formatDetection } from "./tools/detect.js";
 import { composerAudit, composerOutdated, composerValidate, phpLint, phpStaticAnalysis, phpTest } from "./tools/php-tools.js";
 import { MetricsRegistry, resolveProjectScope } from "./metrics/registry.js";
 import { formatMetricsSnapshot } from "./metrics/format.js";
-import { PHP_SYSTEM_HINT, PHP_TRIGGER, isDestructiveShell, mentionsPhp } from "./hooks/php-context.js";
-/** Cheap per-request check; a composer.json may appear or vanish mid-session. */
-function composerJsonExists(dir) {
-    try {
-        return existsSync(join(dir, "composer.json"));
-    }
-    catch {
-        return false;
-    }
-}
+import { PHP_TRIGGER, isDestructiveShell } from "./hooks/php-context.js";
+import { readToolkitConfig } from "./config.js";
+import { ProjectProfileCache } from "./profile.js";
+import { runRouting, runRoutingSafely } from "./routing/orchestrator.js";
+import { getRoutingRenderContext } from "./routing/state.js";
+import { persistStorageState } from "./routing/persistence.js";
+import { applyPermissionsEvent, applySkillActivatedEvent, } from "./routing/events.js";
+import { l0Part, removePhpToolkitParts, renderToolkitStatePart, statePart, } from "./context/parts.js";
+import { buildCurrentStatusSnapshot } from "./status/toolkit-status.js";
 function skillTitle(id) {
     return id
         .split("-")
@@ -35,6 +33,10 @@ export default Plugin.define({
             // Metrics are optional: a storage failure must never take the toolkit down.
             console.error(`[php-toolkit] metrics unavailable: ${err.message}`);
         }
+        const config = readToolkitConfig(ctx.options);
+        const profileCache = new ProjectProfileCache();
+        const sessions = new Map();
+        const contentLengths = new Map();
         /**
          * Wraps a tool so the metric reflects what the tool actually did.
          *
@@ -76,6 +78,7 @@ export default Plugin.define({
                 try {
                     const body = await loadText(`skills/${id}/SKILL.md`);
                     const { front, content } = parseFrontmatter(body);
+                    contentLengths.set(id, Buffer.byteLength(content, "utf8"));
                     skills.push({
                         id,
                         name: front.name ?? skillTitle(id),
@@ -121,6 +124,20 @@ export default Plugin.define({
                         description: c.description,
                         execute: async ({ sessionID, prompt, delivery }) => {
                             await metrics.active.recordCommand({ name: c.name });
+                            if (c.name === "php-toolkit-status") {
+                                const snapshot = await buildCurrentStatusSnapshot(ctx, {
+                                    sessionID,
+                                    profileCache,
+                                    sessions,
+                                    config,
+                                });
+                                await ctx.session.prompt({
+                                    sessionID,
+                                    text: c.template.replace("SNAPSHOT_PLACEHOLDER", snapshot),
+                                    delivery,
+                                });
+                                return;
+                            }
                             const args = prompt.text.trim();
                             const text = c.template.includes("$ARGUMENTS")
                                 ? c.template.replaceAll("$ARGUMENTS", args)
@@ -308,25 +325,44 @@ export default Plugin.define({
         // ---- Hooks ----
         try {
             track(await ctx.session.hook("prompt", async (event) => {
-                try {
-                    if (PHP_TRIGGER.test(event.prompt.text)) {
-                        event.metadata = { ...(event.metadata ?? {}), "php-toolkit": true };
+                const explicit = event.prompt.skills ?? [];
+                const result = await runRoutingSafely(() => runRouting(ctx, {
+                    sessionID: event.sessionID,
+                    text: event.prompt.text,
+                    files: (event.prompt.files ?? []).map((file) => file.name ?? file.uri ?? ""),
+                    skills: explicit,
+                }, config, profileCache, sessions, contentLengths, metrics), explicit);
+                if (result.error) {
+                    console.error(`[php-toolkit] routing failed: ${result.error}`);
+                }
+                // Router attachments are plain IDs; the host brand is only a type-level marker.
+                event.prompt.skills = [...explicit, ...result.attach];
+                if (PHP_TRIGGER.test(event.prompt.text)) {
+                    event.metadata = { ...(event.metadata ?? {}), "php-toolkit": true };
+                    try {
                         await metrics.active.recordTrigger();
                     }
-                }
-                catch {
-                    // never break admission
+                    catch (err) {
+                        console.error(`[php-toolkit] trigger metrics failed: ${err.message}`);
+                    }
                 }
             }));
             track(await ctx.session.hook("context", (event) => {
-                // The PHP hint is only worth its tokens when PHP work is actually
-                // on the table: in the project itself (checked per request - a
-                // composer.json may appear or vanish mid-session), or in this
-                // request's messages.
-                if (composerJsonExists(dir) || mentionsPhp(event.messages)) {
-                    event.system.push({ type: "text", text: PHP_SYSTEM_HINT });
+                event.system = removePhpToolkitParts(event.system);
+                event.system.push(l0Part());
+                const render = getRoutingRenderContext(event.sessionID);
+                if (render && render.state.taskGeneration > 0) {
+                    try {
+                        event.system.push(statePart(renderToolkitStatePart(render)));
+                    }
+                    catch (err) {
+                        console.error(`[php-toolkit] context render failed: ${err.message}`);
+                    }
                 }
             }));
+            track(await ctx.session.hook("compaction", () => { }));
+            track(await ctx.session.hook("title", () => { }));
+            track(await ctx.session.hook("generate", () => { }));
             track(await ctx.tool.hook("execute.before", (event) => {
                 const hit = isDestructiveShell(event.input);
                 if (hit) {
@@ -337,7 +373,56 @@ export default Plugin.define({
         catch (err) {
             console.error(`[php-toolkit] hook registration failed: ${err.message}`);
         }
+        const eventsAbort = new AbortController();
+        void (async () => {
+            try {
+                const stream = await ctx.event.subscribe({ signal: eventsAbort.signal });
+                for await (const event of stream) {
+                    if (eventsAbort.signal.aborted)
+                        break;
+                    if (event.type === "session.skill.activated") {
+                        const state = sessions.get(event.data.sessionID);
+                        if (state) {
+                            applySkillActivatedEvent(state, {
+                                sessionID: event.data.sessionID,
+                                id: event.data.id,
+                            });
+                            try {
+                                await metrics.recordRouting({ kind: "activated", skill: event.data.id });
+                            }
+                            catch (err) {
+                                console.error(`[php-toolkit] routing metrics failed: ${err.message}`);
+                            }
+                            try {
+                                await persistStorageState(ctx.storage, state);
+                            }
+                            catch (err) {
+                                console.error(`[php-toolkit] routing persistence failed: ${err.message}`);
+                            }
+                        }
+                    }
+                    else if (event.type === "session.permissions") {
+                        const state = sessions.get(event.data.sessionID);
+                        if (state) {
+                            applyPermissionsEvent(state, event.data.permissions);
+                            try {
+                                await persistStorageState(ctx.storage, state);
+                            }
+                            catch (err) {
+                                console.error(`[php-toolkit] routing persistence failed: ${err.message}`);
+                            }
+                        }
+                    }
+                }
+            }
+            catch (err) {
+                if (!eventsAbort.signal.aborted) {
+                    console.error(`[php-toolkit] session event subscription failed: ${err.message}`);
+                }
+            }
+        })();
         return async () => {
+            eventsAbort.abort();
             await metrics.flushAll();
             for (const r of registrations.splice(0)) {
                 void r.dispose().catch(() => { });
