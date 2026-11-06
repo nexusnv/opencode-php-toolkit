@@ -18,6 +18,7 @@ import {
   renderToolkitStatePart,
   statePart,
 } from "./context/parts.js";
+import { buildCurrentStatusSnapshot } from "./status/toolkit-status.js";
 
 function skillTitle(id: string): string {
   return id
@@ -137,6 +138,20 @@ export default Plugin.define({
               description: c.description,
               execute: async ({ sessionID, prompt, delivery }) => {
                 await metrics.active.recordCommand({ name: c.name });
+                if (c.name === "php-toolkit-status") {
+                  const snapshot = await buildCurrentStatusSnapshot(ctx, {
+                    sessionID,
+                    profileCache,
+                    sessions,
+                    config,
+                  });
+                  await ctx.session.prompt({
+                    sessionID,
+                    text: c.template.replace("SNAPSHOT_PLACEHOLDER", snapshot),
+                    delivery,
+                  });
+                  return;
+                }
                 const args = prompt.text.trim();
                 const text = c.template.includes("$ARGUMENTS")
                   ? c.template.replaceAll("$ARGUMENTS", args)
