@@ -81,6 +81,17 @@ describe("classify", () => {
     expect(off.concerns).toContain("Architecture");
   });
 
+  it("scores deptrac.yaml and deptrac.yml both as architecture file signals", () => {
+    for (const file of ["deptrac.yaml", "deptrac.yml"]) {
+      const result = classify({
+        prompt: "add a new endpoint",
+        ...base,
+        files: ["src/Example.php", file],
+      });
+      expect(result.scores.Architecture).toBe(2);
+    }
+  });
+
   it("notes framework context without treating it as PHP context", () => {
     const frameworkOnly = classify({
       prompt: "Add a Laravel controller.",

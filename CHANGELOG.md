@@ -18,9 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   skills ship in this phase.
 - Routing lifecycle hardening: persisted activation/permission events hydrate
   sessions after a restart, writes are serialized per session, stale session
-  documents are pruned after 30 days, and routing metrics attribute to the
-  session’s project root. `maxSkillChars` is capped at 16,000, and reserved
-  later-phase options have no effect yet.
+  documents are pruned after 30 days (keyed on the last prompt, so an
+  in-progress long-running task is never pruned mid-flight), and routing
+  metrics attribute to the session’s project root. `maxSkillChars` is capped
+  at 16,000, and reserved later-phase options have no effect yet. A non-PHP
+  prompt drops the previous routing-state system part for the session, and
+  the `resets` routing counter counts explicit task switches while
+  `taskGenerations` counts every new task.
 - Per-session project profiles with application/library confidence and
   root+subpath isolation.
 - L0 engineering constitution, replacing the static one-line typed-PHP hint.

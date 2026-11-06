@@ -1,13 +1,26 @@
 import { realpathSync } from "node:fs";
 import { basename, resolve, sep } from "node:path";
 import { MetricsStore, } from "./store.js";
+const realpathCache = new Map();
+const MAX_REALPATH_CACHE = 256;
 function tryRealpath(path) {
+    const cached = realpathCache.get(path);
+    if (cached !== undefined)
+        return cached;
+    let resolved;
     try {
-        return realpathSync(path);
+        resolved = realpathSync(path);
     }
     catch {
+        // Missing paths compare textually; don't cache them so a path that
+        // appears later resolves correctly.
         return path;
     }
+    if (realpathCache.size >= MAX_REALPATH_CACHE) {
+        realpathCache.delete(realpathCache.keys().next().value);
+    }
+    realpathCache.set(path, resolved);
+    return resolved;
 }
 /**
  * Resolves the project a piece of work belongs to.

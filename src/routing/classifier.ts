@@ -114,18 +114,22 @@ const ACTION_VERB =
 
 const NEGATIVE_SIGNALS: ReadonlyArray<{
   terms: readonly string[];
+  code: string;
   effects: Partial<Record<Target, number>>;
 }> = [
   {
     terms: ["just fix", "quick fix", "small fix", "typo", "rename variable", "one-line", "minor change"],
+    code: "negative:quick-fix",
     effects: { Architecture: -3, "Design patterns": -3, Design: -1 },
   },
   {
     terms: ["no tests", "don't add tests", "skip tests"],
+    code: "negative:no-tests",
     effects: { Testing: -3, Test: -2 },
   },
   {
     terms: ["no refactor", "don't refactor"],
+    code: "negative:no-refactor",
     effects: { Maintain: -3, Architecture: -2 },
   },
 ];
@@ -261,7 +265,7 @@ function matchFileSignals(files: readonly string[]): {
     if (/^phpstan\.neon/i.test(base) || base === "psalm.xml") staticAnalysis = 2;
     if (base === ".php-cs-fixer.php" || /^phpcs\.xml/i.test(base)) standards = 2;
     if (base === "rector.php") maintain = 2;
-    if (base === "deptrac.yaml") architecture = Math.max(architecture, 2);
+    if (base === "deptrac.yaml" || base === "deptrac.yml") architecture = Math.max(architecture, 2);
     if (/(?:^|\/)(?:src\/Domain|Domain)\//.test(file) || /(?:^|\/)migrations\//.test(file)) {
       architecture = Math.max(architecture, 1);
     }
@@ -301,7 +305,7 @@ function applyNegativeSignals(
     for (const [target, effect] of Object.entries(group.effects) as Array<[Target, number]>) {
       scores[target] += effect;
     }
-    reasons.push("negative:quick-fix");
+    reasons.push(group.code);
   }
 }
 

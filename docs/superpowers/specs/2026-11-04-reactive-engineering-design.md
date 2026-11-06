@@ -1543,6 +1543,7 @@ interface RoutingMetrics {
   dropped: Record<string, number>;
   taskGenerations: number;
   continuations: number;
+  /** Explicit task switches (`new task`, `unrelated`, `switch to`, `different problem`). */
   resets: number;
 }
 

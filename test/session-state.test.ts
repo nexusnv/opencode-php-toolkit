@@ -274,6 +274,31 @@ describe("session persistence", () => {
     expect(storage.set).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps a long-running task whose task started long ago but has recent prompts", async () => {
+    const old = createSessionState({
+      sessionID: "long",
+      projectRoot: "/repo",
+      projectSubpath: null,
+      now: 1_000,
+    });
+    // Simulate a months-old task generation that was prompted yesterday.
+    old.lastPromptAt = 2_000_000;
+    const entries = new Map<string, unknown>([
+      [`${SESSION_STORAGE_PREFIX}long`, serializeStorageState(old)],
+    ]);
+    const storage = {
+      scan: vi.fn(async () => ({
+        entries: [...entries.entries()].map(([key, value]) => ({ key, value })),
+      })),
+      remove: vi.fn(async (key: string) => {
+        entries.delete(key);
+      }),
+    };
+    const removed = await pruneStaleRoutingSessions(storage, 2_000_000, 1_000);
+    expect(removed).toBe(0);
+    expect(entries.has(`${SESSION_STORAGE_PREFIX}long`)).toBe(true);
+  });
+
   it("prunes only stale persisted session documents", async () => {
     const old = createSessionState({
       sessionID: "old",

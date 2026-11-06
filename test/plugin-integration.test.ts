@@ -379,6 +379,46 @@ describe("plugin routing integration", () => {
     await cleanup();
   });
 
+  it("drops the PHP routing-state part after a non-PHP prompt", async () => {
+    const { fake, cleanup } = await setupPlugin({ agent: null });
+    const first = promptEvent("s1", "Add a new endpoint.", { files: phpFile });
+    await fake.triggerPromptHook(first);
+    const phpContext = { sessionID: "s1", system: [] as any[], messages: [] as any[] };
+    await fake.triggerContextHook(phpContext);
+    expect(
+      phpContext.system.some((part: any) => part.metadata?.["php-toolkit"]?.kind === "state"),
+    ).toBe(true);
+
+    const second = promptEvent("s1", "Refactor this TypeScript component.");
+    await fake.triggerPromptHook(second);
+    const movedOn = { sessionID: "s1", system: [] as any[], messages: [] as any[] };
+    await fake.triggerContextHook(movedOn);
+    expect(
+      movedOn.system.some((part: any) => part.metadata?.["php-toolkit"]?.kind === "state"),
+    ).toBe(false);
+    expect(
+      movedOn.system.some((part: any) => part.metadata?.["php-toolkit"]?.kind === "l0"),
+    ).toBe(true);
+    await cleanup();
+  });
+
+  it("does not persist routing state when only showing status", async () => {
+    const { fake, cleanup } = await setupPlugin({ agent: null });
+    const status = fake.commands.find((command) => command.name === "php-toolkit-status");
+    expect(status).toBeDefined();
+    await status!.execute({
+      sessionID: "s1",
+      prompt: { text: "" },
+      delivery: {} as never,
+    });
+    const persisted = [...fake.storageEntries.keys()].filter((key) =>
+      key.startsWith("php-toolkit:session:"),
+    );
+    expect(persisted).toEqual([]);
+    expect(fake.prompted.at(-1)?.text).toContain("Task: generation 0");
+    await cleanup();
+  });
+
   it("gives two sessions in different roots different profiles", async () => {
     const { fake, cleanup } = await setupPlugin({
       roots: {

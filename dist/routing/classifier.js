@@ -79,14 +79,17 @@ const ACTION_VERB = /\b(add|implement|create|build|extend|support|introduce|inte
 const NEGATIVE_SIGNALS = [
     {
         terms: ["just fix", "quick fix", "small fix", "typo", "rename variable", "one-line", "minor change"],
+        code: "negative:quick-fix",
         effects: { Architecture: -3, "Design patterns": -3, Design: -1 },
     },
     {
         terms: ["no tests", "don't add tests", "skip tests"],
+        code: "negative:no-tests",
         effects: { Testing: -3, Test: -2 },
     },
     {
         terms: ["no refactor", "don't refactor"],
+        code: "negative:no-refactor",
         effects: { Maintain: -3, Architecture: -2 },
     },
 ];
@@ -205,7 +208,7 @@ function matchFileSignals(files) {
             standards = 2;
         if (base === "rector.php")
             maintain = 2;
-        if (base === "deptrac.yaml")
+        if (base === "deptrac.yaml" || base === "deptrac.yml")
             architecture = Math.max(architecture, 2);
         if (/(?:^|\/)(?:src\/Domain|Domain)\//.test(file) || /(?:^|\/)migrations\//.test(file)) {
             architecture = Math.max(architecture, 1);
@@ -242,7 +245,7 @@ function applyNegativeSignals(working, scores, reasons) {
         for (const [target, effect] of Object.entries(group.effects)) {
             scores[target] += effect;
         }
-        reasons.push("negative:quick-fix");
+        reasons.push(group.code);
     }
 }
 function patternNamePresent(working) {

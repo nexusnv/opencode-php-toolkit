@@ -283,7 +283,7 @@ export async function loadOrCreateState(storage, sessions, input) {
     cacheSessionState(sessions, created);
     return created;
 }
-/** Removes persisted session documents older than the retention window. */
+/** Removes persisted session documents with no prompt activity for the retention window. */
 export async function pruneStaleRoutingSessions(storage, now = Date.now(), retentionMs = SESSION_RETENTION_MS) {
     const cutoff = now - retentionMs;
     let removed = 0;
@@ -296,7 +296,12 @@ export async function pruneStaleRoutingSessions(storage, now = Date.now(), reten
         });
         for (const entry of page.entries) {
             const hydrated = hydrateStorageState(entry.value);
-            if (!hydrated || hydrated.taskStartedAt >= cutoff)
+            if (!hydrated)
+                continue;
+            // Staleness is keyed on recent activity, not when the task started:
+            // a long-running task with fresh prompts must not be pruned.
+            const touched = hydrated.lastPromptAt > 0 ? hydrated.lastPromptAt : hydrated.taskStartedAt;
+            if (touched >= cutoff)
                 continue;
             try {
                 await storage.remove(entry.key);

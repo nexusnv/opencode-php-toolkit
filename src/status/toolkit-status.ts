@@ -1,7 +1,8 @@
 import type { Plugin } from "@opencode/plugin";
 import type { ToolkitConfig } from "../config.js";
 import type { ProjectProfile, ProjectProfileCache } from "../profile.js";
-import { loadOrCreateState } from "../routing/persistence.js";
+import { cacheSessionState, loadPersistedSessionState } from "../routing/persistence.js";
+import { createSessionState } from "../routing/state.js";
 import type { SessionRoutingState } from "../routing/types.js";
 
 export interface ToolkitStatusInput {
@@ -117,12 +118,29 @@ export async function buildCurrentStatusSnapshot(
 
   const subpath = session?.subpath ?? null;
   const profile = await input.profileCache.resolve(root, subpath);
-  const state = await loadOrCreateState(ctx.storage, input.sessions, {
-    sessionID: input.sessionID,
-    projectRoot: root,
-    projectSubpath: subpath,
-    profile,
-    mode: input.config.architectureMode,
-  });
-  return renderToolkitStatus({ profile, state, config: input.config });
+  // A read-only diagnostic must not create or cache routing state on disk;
+  // it hydrates the persisted state (caching the hit) or renders a fresh
+  // transient view of what an untracked session would look like.
+  const cached = input.sessions.get(input.sessionID);
+  let state =
+    cached && cached.projectRoot === root && cached.projectSubpath === subpath
+      ? cached
+      : undefined;
+  if (!state) {
+    const hydrated = await loadPersistedSessionState(ctx.storage, input.sessionID);
+    if (hydrated && hydrated.projectRoot === root && hydrated.projectSubpath === subpath) {
+      cacheSessionState(input.sessions, hydrated);
+      state = hydrated;
+    }
+  }
+  const view =
+    state ??
+    createSessionState({
+      sessionID: input.sessionID,
+      projectRoot: root,
+      projectSubpath: subpath,
+      profile,
+      mode: input.config.architectureMode,
+    });
+  return renderToolkitStatus({ profile, state: view, config: input.config });
 }

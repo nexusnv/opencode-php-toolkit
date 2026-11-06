@@ -79,6 +79,11 @@ export interface PhpToolkitMetrics {
     verification: VerificationMetrics;
     scanner: ScannerMetrics;
 }
+/**
+ * Routing metrics events. `task-generation` fires for every boundary that
+ * starts a new task; `reset` only for explicit task switches; `continuation`
+ * for any (ambiguous) continuation.
+ */
 export type RoutingMetricEvent = {
     kind: "selected";
     skill: string;

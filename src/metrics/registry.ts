@@ -9,12 +9,25 @@ import {
 
 export type { RoutingMetricEvent } from "./store.js";
 
+const realpathCache = new Map<string, string>();
+const MAX_REALPATH_CACHE = 256;
+
 function tryRealpath(path: string): string {
+  const cached = realpathCache.get(path);
+  if (cached !== undefined) return cached;
+  let resolved: string;
   try {
-    return realpathSync(path);
+    resolved = realpathSync(path);
   } catch {
+    // Missing paths compare textually; don't cache them so a path that
+    // appears later resolves correctly.
     return path;
   }
+  if (realpathCache.size >= MAX_REALPATH_CACHE) {
+    realpathCache.delete(realpathCache.keys().next().value as string);
+  }
+  realpathCache.set(path, resolved);
+  return resolved;
 }
 
 /**

@@ -8,6 +8,7 @@ import { loadOrCreateState, persistStorageState } from "./persistence.js";
 import { selectSkills } from "./selector.js";
 import {
   applyTaskBoundary,
+  clearRoutingRenderContext,
   markAttached,
   markDenied,
   setRoutingRenderContext,
@@ -81,7 +82,10 @@ export async function runRouting(
   });
 
   // A non-PHP prompt must not advance the generation or inherit PHP concerns.
+  // Drop the cached render context too: the request must not inject a stale
+  // task part for work the user has moved on from.
   if (!current.phpContext) {
+    clearRoutingRenderContext(input.sessionID);
     return {
       explicit: input.skills,
       attach: [],
@@ -196,7 +200,11 @@ async function recordRoutingMetrics(
   }
   if (boundary.reset) {
     await metrics.recordRouting({ kind: "task-generation" }, projectRoot);
-    await metrics.recordRouting({ kind: "reset" }, projectRoot);
+    // `resets` counts only explicit task switches; new tasks from staleness
+    // or strong-intent boundaries are counted as generations, not resets.
+    if (boundary.mode === "reset") {
+      await metrics.recordRouting({ kind: "reset" }, projectRoot);
+    }
   } else if (
     boundary.mode === "continuation" ||
     boundary.mode === "ambiguous-continuation"

@@ -7,12 +7,6 @@ export interface SignalEntry {
   terms: readonly string[];
 }
 
-export interface FileSignal {
-  glob: string;
-  target: Target | "*";
-  points: 1 | 2;
-}
-
 export const INTENT_PRIORITY: readonly Intent[] = [
   "Debug",
   "Review",
@@ -633,21 +627,4 @@ export const CONCERN_SIGNALS: readonly SignalEntry[] = [
   },
 ];
 
-export const FILE_SIGNALS: readonly FileSignal[] = [
-  { glob: "*.php", target: "*", points: 1 },
-  { glob: "tests/", target: "Testing", points: 2 },
-  { glob: "test/", target: "Testing", points: 2 },
-  { glob: "spec/", target: "Testing", points: 2 },
-  { glob: "*Test.php", target: "Testing", points: 2 },
-  { glob: "phpunit.xml*", target: "Testing", points: 2 },
-  { glob: "Pest.php", target: "Testing", points: 2 },
-  { glob: "phpstan.neon*", target: "Static analysis", points: 2 },
-  { glob: "psalm.xml", target: "Static analysis", points: 2 },
-  { glob: ".php-cs-fixer.php", target: "Coding standards", points: 2 },
-  { glob: "phpcs.xml*", target: "Coding standards", points: 2 },
-  { glob: "rector.php", target: "Maintain", points: 2 },
-  { glob: "deptrac.yaml", target: "Architecture", points: 2 },
-  { glob: "src/Domain/", target: "Architecture", points: 1 },
-  { glob: "Domain/", target: "Architecture", points: 1 },
-  { glob: "migrations/", target: "Architecture", points: 1 },
-];
+

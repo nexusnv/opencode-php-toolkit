@@ -62,8 +62,9 @@ export default Plugin.define({
     const routingStateForEvent = async (
       sessionID: string,
     ): Promise<SessionRoutingState | undefined> => {
-      const cached = sessions.get(sessionID);
-      if (cached) return cached;
+      // Resolve the session first so even a cached entry can be scoped:
+      // routing state is per project, and a stale cache for a moved session
+      // must not receive the event.
       let session;
       try {
         session = await ctx.session.get({ sessionID });
@@ -73,6 +74,12 @@ export default Plugin.define({
       }
       const root = session?.location?.directory ?? ctx.location.directory;
       const subpath = session?.subpath ?? null;
+      const cached = sessions.get(sessionID);
+      if (cached) {
+        if (cached.projectRoot === root && cached.projectSubpath === subpath) return cached;
+        // Stale scope for this session: drop it and re-hydrate from storage.
+        sessions.delete(sessionID);
+      }
       const hydrated = await loadPersistedSessionState(ctx.storage, sessionID);
       if (!hydrated || hydrated.projectRoot !== root || hydrated.projectSubpath !== subpath) {
         return undefined;

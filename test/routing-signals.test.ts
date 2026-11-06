@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   INTENT_SIGNALS,
   CONCERN_SIGNALS,
-  FILE_SIGNALS,
   INTENT_PRIORITY,
   CONCERN_PRIORITY,
 } from "../src/routing/signals.js";
@@ -57,8 +56,4 @@ describe("routing dictionary", () => {
     }
   });
 
-  it("contains the file signals used by the classifier", () => {
-    expect(FILE_SIGNALS).toContainEqual({ glob: "*.php", target: "*", points: 1 });
-    expect(FILE_SIGNALS).toContainEqual({ glob: "migrations/", target: "Architecture", points: 1 });
-  });
 });

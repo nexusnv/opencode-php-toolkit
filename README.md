@@ -161,7 +161,7 @@ PHP toolkit metrics (local-only, never leaves this machine)
     php-review           2 invocations   last 2026-10-21 09:15Z
 
   Routing
-    generations 3   continuations 1   resets 3
+    generations 3   continuations 1   resets 1
     most selected   php-testing (4), php-security (2)
     activations     3                 dropped 1
 

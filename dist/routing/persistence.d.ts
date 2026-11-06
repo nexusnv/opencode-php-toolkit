@@ -28,7 +28,7 @@ export interface SessionPruneStorage {
     }>;
     remove(key: string): Promise<void>;
 }
-/** Removes persisted session documents older than the retention window. */
+/** Removes persisted session documents with no prompt activity for the retention window. */
 export declare function pruneStaleRoutingSessions(storage: SessionPruneStorage, now?: number, retentionMs?: number): Promise<number>;
 export declare function persistStorageState(storage: {
     set(key: string, value: unknown): Promise<void>;
