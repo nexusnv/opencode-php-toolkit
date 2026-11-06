@@ -11,7 +11,6 @@ export function emptyRoutingMetrics() {
         taskGenerations: 0,
         continuations: 0,
         resets: 0,
-        announcements: 0,
     };
 }
 export function emptyVerificationMetrics() {
@@ -167,7 +166,6 @@ function migrateRouting(raw) {
         taskGenerations: nonNegative(num(candidate.taskGenerations)),
         continuations: nonNegative(num(candidate.continuations)),
         resets: nonNegative(num(candidate.resets)),
-        announcements: nonNegative(num(candidate.announcements)),
     };
 }
 function migrateVerification(raw) {
@@ -256,8 +254,7 @@ function isEmptyRouting(routing) {
         Object.keys(routing.dropped).length === 0 &&
         routing.taskGenerations === 0 &&
         routing.continuations === 0 &&
-        routing.resets === 0 &&
-        routing.announcements === 0);
+        routing.resets === 0);
 }
 function isEmptyDelta(delta) {
     return (delta.triggerHits === 0 &&
@@ -301,7 +298,6 @@ export function mergeRoutingMetrics(a, b) {
         taskGenerations: a.taskGenerations + b.taskGenerations,
         continuations: a.continuations + b.continuations,
         resets: a.resets + b.resets,
-        announcements: a.announcements + b.announcements,
     };
 }
 function bumpCounter(target, key) {

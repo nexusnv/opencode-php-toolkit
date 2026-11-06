@@ -1,3 +1,4 @@
+export declare const MAX_ROUTER_SKILL_CHARS = 16000;
 export interface ToolkitConfig {
     autoSkills: "attach" | "hint" | "off";
     maxSkills: number;

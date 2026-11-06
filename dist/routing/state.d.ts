@@ -22,3 +22,5 @@ export interface RoutingRenderContext {
 export declare function setRoutingRenderContext(sessionID: string, value: RoutingRenderContext): void;
 export declare function getRoutingRenderContext(sessionID: string): RoutingRenderContext | undefined;
 export declare function clearRoutingRenderContext(sessionID: string): void;
+/** Drops every render context held by this plugin process. */
+export declare function clearAllRoutingRenderContexts(): void;

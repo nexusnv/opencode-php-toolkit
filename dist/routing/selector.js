@@ -1,3 +1,4 @@
+import { MAX_ROUTER_SKILL_CHARS } from "../config.js";
 import { CONCERN_SKILL_BY_TARGET } from "./catalog.js";
 import { normalizePrompt, stripCodeFences, termToRegex } from "./classifier.js";
 import { CONCERN_PRIORITY } from "./signals.js";
@@ -47,7 +48,9 @@ export function selectSkills(input) {
     const droppedSet = new Set();
     const reasonCodes = [];
     const routerSkillCap = Math.min(Math.max(1, config.maxSkills), 4);
-    const routerCharCap = Math.min(Math.max(1, config.maxSkillChars), 16_000);
+    const routerCharCap = Math.min(Math.max(1, config.maxSkillChars), MAX_ROUTER_SKILL_CHARS);
+    const hardSkillCap = 4;
+    const hardCharCap = MAX_ROUTER_SKILL_CHARS;
     let totalChars = 0;
     // Explicit skills bypass the soft budget, so router selections keep their
     // own count and character budget.
@@ -204,8 +207,6 @@ export function selectSkills(input) {
         !securitySuppressed &&
         !selectedSet.has("php-security")) {
         const securityLength = contentLength(contentLengths, "php-security");
-        const hardSkillCap = 4;
-        const hardCharCap = 16_000;
         if (selected.length < hardSkillCap &&
             totalChars + securityLength <= hardCharCap) {
             removeDrop("php-security");

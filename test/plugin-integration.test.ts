@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolve } from "node:path";
+import { serializeStorageState } from "../src/routing/persistence.js";
 import plugin from "../src/index.js";
 import { applySkillActivatedEvent } from "../src/routing/events.js";
 import {
@@ -14,6 +15,7 @@ interface FakeOverrides {
   options?: Record<string, unknown>;
   roots?: Record<string, string>;
   events?: Array<{ type: string; data: any }>;
+  storageSeed?: Record<string, unknown>;
 }
 
 async function waitFor(predicate: () => Promise<boolean>, timeout = 1000): Promise<void> {
@@ -45,6 +47,24 @@ function fakePluginContext(overrides: FakeOverrides = {}) {
   const commands: Array<{ name: string; execute: (input: any) => Promise<void> }> = [];
   const prompted: Array<{ sessionID: string; text: string }> = [];
   const defaultRoot = resolve("fixtures/php-app");
+  const storageEntries = new Map<string, unknown>(Object.entries(overrides.storageSeed ?? {}));
+  const storage = {
+    get: async (key: string) => storageEntries.get(key),
+    set: async (key: string, value: unknown) => {
+      storageEntries.set(key, value);
+    },
+    remove: async (key: string) => {
+      storageEntries.delete(key);
+    },
+    scan: async (options: { prefix: string; after?: string; limit?: number }) => {
+      const entries = [...storageEntries.entries()]
+        .filter(([key]) => key.startsWith(options.prefix) && (!options.after || key > options.after))
+        .sort(([a], [b]) => a.localeCompare(b))
+        .slice(0, options.limit ?? 100)
+        .map(([key, value]) => ({ key, value }));
+      return { entries };
+    },
+  };
   let releaseEvents = (): void => {};
   const eventGate = new Promise<void>((resolve) => {
     releaseEvents = resolve;
@@ -102,12 +122,8 @@ function fakePluginContext(overrides: FakeOverrides = {}) {
         return { dispose: async () => {} };
       },
     },
-    storage: {
-      get: async (_key: string) => undefined,
-      set: async (_key: string, _value: unknown) => {},
-      remove: async (_key: string) => {},
-      scan: async () => ({ entries: [] }),
-    },
+    storage,
+    storageEntries,
     event: {
       subscribe: async function* () {
         if (!overrides.events) return;
@@ -410,6 +426,74 @@ describe("plugin routing integration", () => {
         part.text.includes("activated=php-testing"),
       );
     });
+    await cleanup();
+  });
+
+  it("hydrates a pre-existing session for activation events after a restart", async () => {
+    const root = resolve("fixtures/php-app");
+    const state = createSessionState({ sessionID: "s1", projectRoot: root, projectSubpath: null });
+    markAttached(state, ["php-testing"], "pending");
+    const seed = { "php-toolkit:session:s1": serializeStorageState(state) };
+    const { fake, cleanup } = await setupPlugin({
+      storageSeed: seed,
+      events: [
+        { type: "session.skill.activated", data: { sessionID: "s1", id: "php-testing" } },
+      ],
+    });
+
+    fake.releaseEvents();
+    await waitFor(async () => {
+      const stored = fake.storageEntries.get("php-toolkit:session:s1") as any;
+      return Array.isArray(stored?.activatedSkills) && stored.activatedSkills.includes("php-testing");
+    });
+    await cleanup();
+  });
+
+  it("hydrates a pre-existing session for permission events after a restart", async () => {
+    const root = resolve("fixtures/php-app");
+    const state = createSessionState({ sessionID: "s1", projectRoot: root, projectSubpath: null });
+    markAttached(state, ["php-testing"], "pending");
+    const seed = { "php-toolkit:session:s1": serializeStorageState(state) };
+    const { fake, cleanup } = await setupPlugin({
+      storageSeed: seed,
+      events: [
+        {
+          type: "session.permissions",
+          data: {
+            sessionID: "s1",
+            permissions: [{ action: "skill", resource: "php-testing", effect: "deny" }],
+          },
+        },
+      ],
+    });
+
+    fake.releaseEvents();
+    await waitFor(async () => {
+      const stored = fake.storageEntries.get("php-toolkit:session:s1") as any;
+      return stored?.unactivatedSkills?.[0]?.status === "denied";
+    });
+    await cleanup();
+  });
+
+  it("does not hydrate a session whose persisted project scope no longer matches", async () => {
+    const state = createSessionState({
+      sessionID: "s1",
+      projectRoot: "/elsewhere",
+      projectSubpath: null,
+    });
+    markAttached(state, ["php-testing"], "pending");
+    const seed = { "php-toolkit:session:s1": serializeStorageState(state) };
+    const { fake, cleanup } = await setupPlugin({
+      storageSeed: seed,
+      events: [
+        { type: "session.skill.activated", data: { sessionID: "s1", id: "php-testing" } },
+      ],
+    });
+
+    fake.releaseEvents();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const stored = fake.storageEntries.get("php-toolkit:session:s1") as any;
+    expect(stored.activatedSkills ?? []).not.toContain("php-testing");
     await cleanup();
   });
 

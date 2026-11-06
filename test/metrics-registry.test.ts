@@ -129,6 +129,25 @@ describe("MetricsRegistry", () => {
     expect(own.tools.php_lint.findings).toBe(1);
   });
 
+  it("attributes explicit routing events to their project root", async () => {
+    const { storage, data } = fakeStorage();
+    const registry = new MetricsRegistry(storage, ACTIVE);
+    await registry.initActive();
+    await registry.recordRouting({ kind: "selected", skill: "php-testing" }, "/home/dev/other-app");
+    await registry.recordRouting({ kind: "selected", skill: "php-debug" }, ACTIVE.path);
+    await registry.flushAll();
+    const other = data.get(storageKeyFor("/home/dev/other-app")) as {
+      routing: { selections: Record<string, { count: number }> };
+    };
+    const own = data.get(storageKeyFor(ACTIVE.path)) as {
+      routing: { selections: Record<string, { count: number }> };
+    };
+    expect(other.routing.selections["php-testing"].count).toBe(1);
+    expect(other.routing.selections["php-debug"]).toBeUndefined();
+    expect(own.routing.selections["php-debug"].count).toBe(1);
+    expect(own.routing.selections["php-testing"]).toBeUndefined();
+  });
+
   it("survives a project whose document cannot be read", async () => {
     const { storage } = fakeStorage();
     storage.get = async () => {

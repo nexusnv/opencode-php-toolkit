@@ -30,8 +30,8 @@ export declare class MetricsRegistry {
     storeFor(path: string): MetricsStore;
     /** Loads the active project's document. */
     initActive(): Promise<void>;
-    /** Records one routing event against the active project. */
-    recordRouting(event: RoutingMetricEvent): Promise<void>;
+    /** Records one routing event, attributed to its project root when known. */
+    recordRouting(event: RoutingMetricEvent, projectRoot?: string): Promise<void>;
     /** Writes pending changes for every known project. */
     flushAll(): Promise<void>;
     /** Clears the active project's metrics document and starts over. */

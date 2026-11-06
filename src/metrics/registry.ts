@@ -61,10 +61,14 @@ export class MetricsRegistry {
 
   /** The store for a project root, created on first use. */
   storeFor(path: string): MetricsStore {
-    const existing = this.stores.get(path);
+    const canonical = tryRealpath(path);
+    const existing = this.stores.get(canonical);
     if (existing) return existing;
-    const store = new MetricsStore(this.storage, { name: basename(path) || path, path });
-    this.stores.set(path, store);
+    const store = new MetricsStore(this.storage, {
+      name: basename(canonical) || canonical,
+      path: canonical,
+    });
+    this.stores.set(canonical, store);
     // Loading is best effort: an unreadable document must not stop the
     // toolkit, and the store refuses to write over what it could not read.
     void store.init().catch(() => {});
@@ -76,9 +80,9 @@ export class MetricsRegistry {
     await this.active.init();
   }
 
-  /** Records one routing event against the active project. */
-  async recordRouting(event: RoutingMetricEvent): Promise<void> {
-    const store = this.active;
+  /** Records one routing event, attributed to its project root when known. */
+  async recordRouting(event: RoutingMetricEvent, projectRoot?: string): Promise<void> {
+    const store = projectRoot ? this.storeFor(projectRoot) : this.active;
     if (!store) return;
     await store.recordRouting(event);
   }

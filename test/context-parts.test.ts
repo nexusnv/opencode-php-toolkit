@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { removePhpToolkitParts, renderToolkitStatePart } from "../src/context/parts.js";
+import {
+  clearAllRoutingRenderContexts,
+  getRoutingRenderContext,
+  setRoutingRenderContext,
+} from "../src/routing/state.js";
 
 describe("context parts", () => {
   it("removes prior php-toolkit system parts only", () => {
@@ -58,5 +63,18 @@ describe("context parts", () => {
     });
     expect(text).toContain("Framework: laravel");
     expect(text).toContain("framework-specific rules live in the sibling toolkit");
+  });
+
+  it("evicts the stalest render context when the cache is full", () => {
+    const id = (n: number) => `render-lru-${n}`;
+    for (let n = 0; n < 101; n += 1) {
+      setRoutingRenderContext(id(n), {
+        profile: { type: "application", frameworkHints: ["none"] } as never,
+        state: { taskGeneration: n + 1, lastPromptAt: n } as never,
+      });
+    }
+    expect(getRoutingRenderContext(id(0))).toBeUndefined();
+    expect(getRoutingRenderContext(id(100))?.state.taskGeneration).toBe(101);
+    clearAllRoutingRenderContexts();
   });
 });

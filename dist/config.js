@@ -1,3 +1,4 @@
+export const MAX_ROUTER_SKILL_CHARS = 16_000;
 export const DEFAULT_TOOLKIT_CONFIG = {
     autoSkills: "attach",
     maxSkills: 3,
@@ -29,11 +30,22 @@ export function readToolkitConfig(raw, warn = (message) => console.warn(`[php-to
         warn("invalid maxSkills; using default");
     else if (maxSkills !== undefined)
         out.maxSkills = maxSkills;
-    const maxSkillChars = boundedInt(input.maxSkillChars, 1, 100_000);
-    if (maxSkillChars === undefined && input.maxSkillChars !== undefined)
-        warn("invalid maxSkillChars; using default");
-    else if (maxSkillChars !== undefined)
-        out.maxSkillChars = maxSkillChars;
+    const rawMaxSkillChars = input.maxSkillChars;
+    if (typeof rawMaxSkillChars === "number" &&
+        Number.isFinite(rawMaxSkillChars) &&
+        rawMaxSkillChars > MAX_ROUTER_SKILL_CHARS) {
+        out.maxSkillChars = MAX_ROUTER_SKILL_CHARS;
+        warn(`maxSkillChars capped at ${MAX_ROUTER_SKILL_CHARS}`);
+    }
+    else {
+        const maxSkillChars = boundedInt(rawMaxSkillChars, 1, MAX_ROUTER_SKILL_CHARS);
+        if (maxSkillChars === undefined && input.maxSkillChars !== undefined) {
+            warn("invalid maxSkillChars; using default");
+        }
+        else if (maxSkillChars !== undefined) {
+            out.maxSkillChars = maxSkillChars;
+        }
+    }
     return out;
 }
 //# sourceMappingURL=config.js.map

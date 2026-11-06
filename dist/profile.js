@@ -3,7 +3,23 @@ import { access, readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { PKG_ROOT } from "./content.js";
 import { detectPhpProject } from "./tools/detect.js";
-const PACKAGE_VERSION = JSON.parse(await readFile(join(PKG_ROOT, "package.json"), "utf8")).version;
+let packageVersionPromise;
+function packageVersion() {
+    packageVersionPromise ??= readFile(join(PKG_ROOT, "package.json"), "utf8")
+        .then((raw) => {
+        try {
+            const parsed = JSON.parse(raw);
+            return typeof parsed.version === "string" && parsed.version.length > 0
+                ? parsed.version
+                : "0.0.0";
+        }
+        catch {
+            return "0.0.0";
+        }
+    })
+        .catch(() => "0.0.0");
+    return packageVersionPromise;
+}
 const CONFIG_PROBES = {
     phpunit: ["phpunit.xml", "phpunit.xml.dist"],
     pest: ["Pest.php"],
@@ -100,19 +116,31 @@ async function releaseMetadata(root) {
         return false;
     }
 }
-async function computeFingerprint(root) {
+async function hashedFiles(root) {
     const configFiles = await probeConfigFiles(root);
-    const parts = [PACKAGE_VERSION];
-    const composerPath = join(root, "composer.json");
-    try {
-        parts.push(`composer.json\0${await readFile(composerPath, "utf8")}`);
+    return [
+        "composer.json",
+        ...Object.values(configFiles).filter((name) => typeof name === "string"),
+    ].sort();
+}
+/** Cheap signature used to decide whether hashing file contents is needed. */
+async function contentFileSignature(root) {
+    const files = await hashedFiles(root);
+    const parts = [`package:${await packageVersion()}`];
+    for (const name of files) {
+        try {
+            const info = await stat(join(root, name));
+            parts.push(`${name}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`);
+        }
+        catch {
+            parts.push(`${name}:missing`);
+        }
     }
-    catch {
-        // Missing or unreadable composer.json is already reflected in the profile.
-    }
-    const files = Object.values(configFiles)
-        .filter((name) => typeof name === "string")
-        .sort();
+    return parts.join("|");
+}
+async function computeFingerprint(root) {
+    const files = await hashedFiles(root);
+    const parts = [await packageVersion()];
     for (const name of files) {
         try {
             parts.push(`${name}\0${await readFile(join(root, name), "utf8")}`);
@@ -148,6 +176,16 @@ async function computeLockFingerprint(root) {
     }
     catch {
         return null;
+    }
+}
+/** Cheap signature used to decide whether composer.lock needs hashing. */
+async function lockFileSignature(root) {
+    try {
+        const info = await stat(join(root, "composer.lock"));
+        return `${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+    }
+    catch {
+        return "missing";
     }
 }
 async function computeLayoutMarkerSignature(root) {
@@ -289,31 +327,37 @@ function cacheKey(root, subpath) {
 export class ProjectProfileCache {
     #items = new Map();
     #layoutMarkerSignatures = new Map();
+    #contentSignatures = new Map();
+    #lockSignatures = new Map();
     get size() {
         return this.#items.size;
     }
     async resolve(root, subpath) {
         const key = cacheKey(root, subpath);
         const cached = this.#items.get(key);
-        const [freshFingerprint, lockFingerprint, markerSignature] = await Promise.all([
-            computeFingerprint(root),
-            computeLockFingerprint(root),
+        const [contentSignature, lockSignature, markerSignature] = await Promise.all([
+            contentFileSignature(root),
+            lockFileSignature(root),
             computeLayoutMarkerSignature(root),
         ]);
         if (cached &&
-            cached.fingerprint === freshFingerprint &&
-            cached.lockFingerprint === lockFingerprint &&
+            this.#contentSignatures.get(key) === contentSignature &&
+            this.#lockSignatures.get(key) === lockSignature &&
             this.#layoutMarkerSignatures.get(key) === markerSignature) {
             return cached;
         }
         const next = await buildProjectProfile(root, subpath);
         this.#layoutMarkerSignatures.set(key, markerSignature);
+        this.#contentSignatures.set(key, contentSignature);
+        this.#lockSignatures.set(key, lockSignature);
         this.#items.set(key, next);
         return next;
     }
     clear() {
         this.#items.clear();
         this.#layoutMarkerSignatures.clear();
+        this.#contentSignatures.clear();
+        this.#lockSignatures.clear();
     }
 }
 //# sourceMappingURL=profile.js.map

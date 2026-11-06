@@ -137,8 +137,10 @@ Escape hatches:
 - `autoSkills: "hint"` records recommendations without attaching them.
 - `autoSkills: "off"` restores passive behavior; the L0 constitution remains active.
 - `architectureMode: "off"` disables design gating.
-- `announceSelections` remains `off` by default; routing uses no synthetic announcement
-  messages.
+- `maxSkillChars` is capped at 16,000.
+- `architectureScan`, `announceSelections` and `verification` are reserved for
+  later phases; Phase 1 parses them but they have no effect. Routing is always
+  silent by default.
 
 ## Local metrics
 

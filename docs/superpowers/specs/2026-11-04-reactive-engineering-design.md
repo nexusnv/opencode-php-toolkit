@@ -640,7 +640,7 @@ Rules:
 Default budget:
 
 - `maxSkills`: 3.
-- `maxSkillChars`: 12,000.
+- `maxSkillChars`: 12,000. Configurable up to 16,000; larger values are clamped.
 - Hard ceiling: 4 skills / 16,000 chars, reached only when the user explicitly selects
   skills or a high-confidence security concern needs the fourth slot or replaces a
   lower-priority skill.
@@ -1494,11 +1494,16 @@ Plugin options (all optional; defaults preserve the least-friction behavior):
 | --- | --- | --- | --- |
 | `autoSkills` | `attach` \| `hint` \| `off` | `attach` | Attach skills, only recommend them, or disable routing. |
 | `maxSkills` | integer 1–4 | `3` | Soft budget; explicit selections bypass. |
-| `maxSkillChars` | integer | `12000` | Soft character budget for attached skill content. |
+| `maxSkillChars` | integer 1–16000 | `12000` | Soft character budget for attached skill content; values above 16,000 are clamped. |
 | `architectureMode` | `risk` \| `strict` \| `off` | `risk` | Risk-based, always-approval, or disabled. |
 | `architectureScan` | `tool` \| `auto` \| `off` | `tool` | On-demand, auto for strong design intent, or disabled. |
 | `announceSelections` | `on-change` \| `always` \| `off` | `off` | Visibility of routing decisions. P0 is silent; diagnostics live in `/php-toolkit-status`. |
 | `verification` | `remind` \| `off` | `remind` | Include the completion checklist for Build/Design/Test. |
+
+`architectureScan`, `announceSelections` and `verification` are reserved until their
+respective phases ship; Phase 1 parses these options but gives them no behavior.
+Routing is silent by default, and the escape hatches become effective when the
+corresponding layer lands.
 
 Project-local `php-toolkit.json` (optional) supports architecture boundaries and routing
 overrides as described in Section 11.3. Project-local routing overrides take precedence over
@@ -1518,8 +1523,9 @@ Escape hatches:
   explicitly.
 - `architectureMode: "off"` disables classifier design gating; routing and skill attachment
   continue.
-- `architectureScan: "off"` disables the scanner.
-- `verification: "off"` removes the completion reminder; the tool remains available.
+- `architectureScan: "off"` disables the scanner once it ships; Phase 1 does not register one.
+- `verification: "off"` removes the completion reminder once shipped; the tool remains
+  available.
 
 ## 14. Metrics and observability
 
@@ -1538,7 +1544,6 @@ interface RoutingMetrics {
   taskGenerations: number;
   continuations: number;
   resets: number;
-  announcements: number;
 }
 
 interface VerificationMetrics {

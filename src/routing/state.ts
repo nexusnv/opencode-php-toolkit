@@ -120,9 +120,17 @@ export interface RoutingRenderContext {
 }
 
 const renderContexts = new Map<string, RoutingRenderContext>();
+const MAX_ROUTING_CONTEXTS = 100;
 
 export function setRoutingRenderContext(sessionID: string, value: RoutingRenderContext): void {
+  // Re-insert to move the entry to the end of the LRU, then evict the oldest.
+  if (renderContexts.has(sessionID)) renderContexts.delete(sessionID);
   renderContexts.set(sessionID, value);
+  while (renderContexts.size > MAX_ROUTING_CONTEXTS) {
+    const oldest = renderContexts.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    renderContexts.delete(oldest);
+  }
 }
 
 export function getRoutingRenderContext(sessionID: string): RoutingRenderContext | undefined {
@@ -131,4 +139,9 @@ export function getRoutingRenderContext(sessionID: string): RoutingRenderContext
 
 export function clearRoutingRenderContext(sessionID: string): void {
   renderContexts.delete(sessionID);
+}
+
+/** Drops every render context held by this plugin process. */
+export function clearAllRoutingRenderContexts(): void {
+  renderContexts.clear();
 }

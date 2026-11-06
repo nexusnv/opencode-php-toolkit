@@ -35,7 +35,6 @@ describe("metrics v3", () => {
       taskGenerations: 0,
       continuations: 0,
       resets: 0,
-      announcements: 0,
     });
     expect(metrics.verification).toEqual({
       runs: 0,

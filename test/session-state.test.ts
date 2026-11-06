@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   applyTaskBoundary,
   createSessionState,
@@ -9,7 +9,10 @@ import {
 import {
   hydrateStorageState,
   loadOrCreateState,
+  persistStorageState,
+  pruneStaleRoutingSessions,
   serializeStorageState,
+  SESSION_STORAGE_PREFIX,
 } from "../src/routing/persistence.js";
 
 describe("session routing state", () => {
@@ -170,6 +173,40 @@ describe("session persistence", () => {
     expect(moved.projectRoot).toBe("/other");
   });
 
+  it("rejects out-of-range or oversized documents", () => {
+    const state = createSessionState({
+      sessionID: "s1",
+      projectRoot: "/repo",
+      projectSubpath: null,
+    });
+    state.taskGeneration = 1;
+    const stored = serializeStorageState(state);
+    expect(hydrateStorageState({ ...stored, taskGeneration: -1 })).toBeNull();
+    expect(
+      hydrateStorageState({ ...stored, taskStartedAt: Number.POSITIVE_INFINITY }),
+    ).toBeNull();
+    expect(
+      hydrateStorageState({
+        ...stored,
+        unactivatedSkills: [{ id: "php-testing", attempts: -1, status: "pending", reason: "x" }],
+      }),
+    ).toBeNull();
+    expect(
+      hydrateStorageState({ ...stored, selectedSkills: ["x".repeat(129)] }),
+    ).toBeNull();
+    expect(
+      hydrateStorageState({ ...stored, selectedSkills: Array(257).fill("php-testing") }),
+    ).toBeNull();
+    expect(
+      hydrateStorageState({
+        ...stored,
+        unactivatedSkills: [
+          { id: "php-testing", attempts: 1, status: "pending", reason: "x".repeat(257) },
+        ],
+      }),
+    ).toBeNull();
+  });
+
   it("hydrates persisted state after a restart", async () => {
     const state = createSessionState({
       sessionID: "s1",
@@ -208,5 +245,65 @@ describe("session persistence", () => {
       projectSubpath: null,
     });
     expect(state.sessionID).toBe("s1");
+  });
+
+  it("serializes writes for the same session", async () => {
+    const calls: string[] = [];
+    const release: Array<() => void> = [];
+    const storage = {
+      set: vi.fn(async (_key: string, value: { taskGeneration: number }) => {
+        calls.push(`start:${value.taskGeneration}`);
+        await new Promise<void>((resolve) => release.push(resolve));
+        calls.push(`end:${value.taskGeneration}`);
+      }),
+    };
+    const first = createSessionState({ sessionID: "s1", projectRoot: "/repo", projectSubpath: null });
+    first.taskGeneration = 1;
+    const second = createSessionState({ sessionID: "s1", projectRoot: "/repo", projectSubpath: null });
+    second.taskGeneration = 2;
+
+    const p1 = persistStorageState(storage, first);
+    const p2 = persistStorageState(storage, second);
+    await vi.waitFor(() => expect(calls).toEqual(["start:1"]));
+    release[0]!();
+    await vi.waitFor(() => expect(calls).toEqual(["start:1", "end:1", "start:2"]));
+    release[1]!();
+
+    await Promise.all([p1, p2]);
+    expect(calls).toEqual(["start:1", "end:1", "start:2", "end:2"]);
+    expect(storage.set).toHaveBeenCalledTimes(2);
+  });
+
+  it("prunes only stale persisted session documents", async () => {
+    const old = createSessionState({
+      sessionID: "old",
+      projectRoot: "/repo",
+      projectSubpath: null,
+      now: 1_000,
+    });
+    const fresh = createSessionState({
+      sessionID: "fresh",
+      projectRoot: "/repo",
+      projectSubpath: null,
+      now: 2_000_000,
+    });
+    const entries = new Map<string, unknown>([
+      [`${SESSION_STORAGE_PREFIX}old`, serializeStorageState(old)],
+      [`${SESSION_STORAGE_PREFIX}fresh`, serializeStorageState(fresh)],
+      [`${SESSION_STORAGE_PREFIX}corrupt`, { schemaVersion: 1 }],
+    ]);
+    const storage = {
+      scan: vi.fn(async () => ({
+        entries: [...entries.entries()].map(([key, value]) => ({ key, value })),
+      })),
+      remove: vi.fn(async (key: string) => {
+        entries.delete(key);
+      }),
+    };
+    const removed = await pruneStaleRoutingSessions(storage, 2_000_000, 1_000);
+    expect(removed).toBe(1);
+    expect(entries.has(`${SESSION_STORAGE_PREFIX}old`)).toBe(false);
+    expect(entries.has(`${SESSION_STORAGE_PREFIX}fresh`)).toBe(true);
+    expect(entries.has(`${SESSION_STORAGE_PREFIX}corrupt`)).toBe(true);
   });
 });

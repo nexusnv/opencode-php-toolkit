@@ -55,9 +55,23 @@ export interface ProjectProfile {
   lockFingerprint: string | null;
 }
 
-const PACKAGE_VERSION = JSON.parse(
-  await readFile(join(PKG_ROOT, "package.json"), "utf8"),
-).version as string;
+let packageVersionPromise: Promise<string> | undefined;
+
+function packageVersion(): Promise<string> {
+  packageVersionPromise ??= readFile(join(PKG_ROOT, "package.json"), "utf8")
+    .then((raw) => {
+      try {
+        const parsed = JSON.parse(raw) as { version?: unknown };
+        return typeof parsed.version === "string" && parsed.version.length > 0
+          ? parsed.version
+          : "0.0.0";
+      } catch {
+        return "0.0.0";
+      }
+    })
+    .catch(() => "0.0.0");
+  return packageVersionPromise;
+}
 
 const CONFIG_PROBES = {
   phpunit: ["phpunit.xml", "phpunit.xml.dist"],
@@ -162,18 +176,32 @@ async function releaseMetadata(root: string): Promise<boolean> {
   }
 }
 
-async function computeFingerprint(root: string): Promise<string> {
+async function hashedFiles(root: string): Promise<string[]> {
   const configFiles = await probeConfigFiles(root);
-  const parts: string[] = [PACKAGE_VERSION];
-  const composerPath = join(root, "composer.json");
-  try {
-    parts.push(`composer.json\0${await readFile(composerPath, "utf8")}`);
-  } catch {
-    // Missing or unreadable composer.json is already reflected in the profile.
+  return [
+    "composer.json",
+    ...Object.values(configFiles).filter((name): name is string => typeof name === "string"),
+  ].sort();
+}
+
+/** Cheap signature used to decide whether hashing file contents is needed. */
+async function contentFileSignature(root: string): Promise<string> {
+  const files = await hashedFiles(root);
+  const parts = [`package:${await packageVersion()}`];
+  for (const name of files) {
+    try {
+      const info = await stat(join(root, name));
+      parts.push(`${name}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`);
+    } catch {
+      parts.push(`${name}:missing`);
+    }
   }
-  const files = Object.values(configFiles)
-    .filter((name): name is string => typeof name === "string")
-    .sort();
+  return parts.join("|");
+}
+
+async function computeFingerprint(root: string): Promise<string> {
+  const files = await hashedFiles(root);
+  const parts: string[] = [await packageVersion()];
   for (const name of files) {
     try {
       parts.push(`${name}\0${await readFile(join(root, name), "utf8")}`);
@@ -213,6 +241,16 @@ async function computeLockFingerprint(root: string): Promise<string | null> {
     return sha256(await readFile(join(root, "composer.lock"), "utf8"));
   } catch {
     return null;
+  }
+}
+
+/** Cheap signature used to decide whether composer.lock needs hashing. */
+async function lockFileSignature(root: string): Promise<string> {
+  try {
+    const info = await stat(join(root, "composer.lock"));
+    return `${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+  } catch {
+    return "missing";
   }
 }
 
@@ -368,6 +406,8 @@ function cacheKey(root: string, subpath: string | null): string {
 export class ProjectProfileCache {
   #items = new Map<string, ProjectProfile>();
   #layoutMarkerSignatures = new Map<string, string>();
+  #contentSignatures = new Map<string, string>();
+  #lockSignatures = new Map<string, string>();
 
   get size(): number {
     return this.#items.size;
@@ -376,21 +416,23 @@ export class ProjectProfileCache {
   async resolve(root: string, subpath: string | null): Promise<ProjectProfile> {
     const key = cacheKey(root, subpath);
     const cached = this.#items.get(key);
-    const [freshFingerprint, lockFingerprint, markerSignature] = await Promise.all([
-      computeFingerprint(root),
-      computeLockFingerprint(root),
+    const [contentSignature, lockSignature, markerSignature] = await Promise.all([
+      contentFileSignature(root),
+      lockFileSignature(root),
       computeLayoutMarkerSignature(root),
     ]);
     if (
       cached &&
-      cached.fingerprint === freshFingerprint &&
-      cached.lockFingerprint === lockFingerprint &&
+      this.#contentSignatures.get(key) === contentSignature &&
+      this.#lockSignatures.get(key) === lockSignature &&
       this.#layoutMarkerSignatures.get(key) === markerSignature
     ) {
       return cached;
     }
     const next = await buildProjectProfile(root, subpath);
     this.#layoutMarkerSignatures.set(key, markerSignature);
+    this.#contentSignatures.set(key, contentSignature);
+    this.#lockSignatures.set(key, lockSignature);
     this.#items.set(key, next);
     return next;
   }
@@ -398,5 +440,7 @@ export class ProjectProfileCache {
   clear(): void {
     this.#items.clear();
     this.#layoutMarkerSignatures.clear();
+    this.#contentSignatures.clear();
+    this.#lockSignatures.clear();
   }
 }

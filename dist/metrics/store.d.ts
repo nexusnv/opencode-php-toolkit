@@ -37,7 +37,6 @@ export interface RoutingMetrics {
     taskGenerations: number;
     continuations: number;
     resets: number;
-    announcements: number;
 }
 export interface VerificationMetrics {
     runs: number;

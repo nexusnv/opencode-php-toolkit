@@ -43,7 +43,6 @@ export interface RoutingMetrics {
   taskGenerations: number;
   continuations: number;
   resets: number;
-  announcements: number;
 }
 
 export interface VerificationMetrics {
@@ -111,7 +110,6 @@ export function emptyRoutingMetrics(): RoutingMetrics {
     taskGenerations: 0,
     continuations: 0,
     resets: 0,
-    announcements: 0,
   };
 }
 
@@ -294,7 +292,6 @@ function migrateRouting(raw: unknown): RoutingMetrics {
     taskGenerations: nonNegative(num(candidate.taskGenerations)),
     continuations: nonNegative(num(candidate.continuations)),
     resets: nonNegative(num(candidate.resets)),
-    announcements: nonNegative(num(candidate.announcements)),
   };
 }
 
@@ -397,8 +394,7 @@ function isEmptyRouting(routing: RoutingMetrics): boolean {
     Object.keys(routing.dropped).length === 0 &&
     routing.taskGenerations === 0 &&
     routing.continuations === 0 &&
-    routing.resets === 0 &&
-    routing.announcements === 0
+    routing.resets === 0
   );
 }
 
@@ -450,7 +446,6 @@ export function mergeRoutingMetrics(a: RoutingMetrics, b: RoutingMetrics): Routi
     taskGenerations: a.taskGenerations + b.taskGenerations,
     continuations: a.continuations + b.continuations,
     resets: a.resets + b.resets,
-    announcements: a.announcements + b.announcements,
   };
 }
 

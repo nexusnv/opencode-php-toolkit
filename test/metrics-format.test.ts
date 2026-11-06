@@ -21,7 +21,6 @@ function metrics(overrides: Partial<PhpToolkitMetrics> = {}): PhpToolkitMetrics 
       taskGenerations: 0,
       continuations: 0,
       resets: 0,
-      announcements: 0,
     },
     verification: {
       runs: 0,

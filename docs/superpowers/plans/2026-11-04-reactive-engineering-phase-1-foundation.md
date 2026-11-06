@@ -177,7 +177,6 @@ describe("metrics v3", () => {
       taskGenerations: 0,
       continuations: 0,
       resets: 0,
-      announcements: 0,
     });
     expect(metrics.verification).toEqual({
       runs: 0,
@@ -242,7 +241,6 @@ export interface RoutingMetrics {
   taskGenerations: number;
   continuations: number;
   resets: number;
-  announcements: number;
 }
 
 export interface VerificationMetrics {
@@ -297,7 +295,6 @@ export function emptyRoutingMetrics(): RoutingMetrics {
     taskGenerations: 0,
     continuations: 0,
     resets: 0,
-    announcements: 0,
   };
 }
 
@@ -402,12 +399,15 @@ export type RoutingMetricEvent =
 Add to `MetricsRegistry`:
 
 ```ts
-async recordRouting(event: RoutingMetricEvent): Promise<void> {
-  const store = this.active;
+async recordRouting(event: RoutingMetricEvent, projectRoot?: string): Promise<void> {
+  const store = projectRoot ? this.storeFor(projectRoot) : this.active;
   if (!store) return;
   await store.recordRouting(event);
 }
 ```
+
+`storeFor(path)` canonicalizes the path before keying the store, so sessions opened
+through a symlink share one document with sessions opened directly.
 
 Add `routing` to `MetricsDelta` and apply each event directly to the pending delta. The store already uses `this.delta` plus `markDirty()`, so do not introduce a second persistence path:
 
@@ -593,6 +593,15 @@ describe("readToolkitConfig", () => {
   it("autoSkills off disables routing but not the constitution", () => {
     expect(readToolkitConfig({ autoSkills: "off" }).autoSkills).toBe("off");
   });
+
+  it("caps maxSkillChars at the hard ceiling instead of silently exceeding it", () => {
+    const warnings: string[] = [];
+    const config = readToolkitConfig({ maxSkillChars: 100_000 }, (message) =>
+      warnings.push(message),
+    );
+    expect(config.maxSkillChars).toBe(16_000);
+    expect(warnings).toContain("maxSkillChars capped at 16000");
+  });
 });
 ```
 
@@ -600,13 +609,20 @@ describe("readToolkitConfig", () => {
 
 ```ts
 // src/config.ts
+export const MAX_ROUTER_SKILL_CHARS = 16_000;
+
 export interface ToolkitConfig {
   autoSkills: "attach" | "hint" | "off";
   maxSkills: number;
   maxSkillChars: number;
+  // Architecture workflow mode. Phase 1 uses "off" to disable classifier
+  // design gating; "strict" is reserved for the later approval workflow.
   architectureMode: "risk" | "strict" | "off";
+  // Reserved for later phases; parsed but inert in Phase 1.
   architectureScan: "tool" | "auto" | "off";
+  // Reserved for later phases; Phase 1 is always silent.
   announceSelections: "on-change" | "always" | "off";
+  // Reserved for later phases; parsed but inert in Phase 1.
   verification: "remind" | "off";
 }
 
@@ -645,9 +661,22 @@ export function readToolkitConfig(
   const maxSkills = boundedInt(input.maxSkills, 1, 4);
   if (maxSkills === undefined && input.maxSkills !== undefined) warn("invalid maxSkills; using default");
   else if (maxSkills !== undefined) out.maxSkills = maxSkills;
-  const maxSkillChars = boundedInt(input.maxSkillChars, 1, 100_000);
-  if (maxSkillChars === undefined && input.maxSkillChars !== undefined) warn("invalid maxSkillChars; using default");
-  else if (maxSkillChars !== undefined) out.maxSkillChars = maxSkillChars;
+  const rawMaxSkillChars = input.maxSkillChars;
+  if (
+    typeof rawMaxSkillChars === "number" &&
+    Number.isFinite(rawMaxSkillChars) &&
+    rawMaxSkillChars > MAX_ROUTER_SKILL_CHARS
+  ) {
+    out.maxSkillChars = MAX_ROUTER_SKILL_CHARS;
+    warn(`maxSkillChars capped at ${MAX_ROUTER_SKILL_CHARS}`);
+  } else {
+    const maxSkillChars = boundedInt(rawMaxSkillChars, 1, MAX_ROUTER_SKILL_CHARS);
+    if (maxSkillChars === undefined && input.maxSkillChars !== undefined) {
+      warn("invalid maxSkillChars; using default");
+    } else if (maxSkillChars !== undefined) {
+      out.maxSkillChars = maxSkillChars;
+    }
+  }
   return out;
 }
 ```
@@ -1907,7 +1936,7 @@ Question form suppresses intent co-skills and allows only concern skills scoring
 Budget rules:
 
 - `maxSkills` default 3; the router's own count is independent of explicit skills.
-- `maxSkillChars` default 12000; the router's own character count is independent of explicit skills; use `contentLengths` measured from file bytes.
+- `maxSkillChars` default 12000; the router's own character count is independent of explicit skills; larger values are clamped at 16,000; use `contentLengths` measured from file bytes.
 - Hard ceiling 4 skills / 16000 chars applies to the total selection and is reached only for explicit overflow or a high-confidence Security concern.
 - If adding a candidate exceeds the router's soft cap, drop that candidate and record `budget:max-skills` or `budget:max-chars`.
 - Explicit skills are reported in `selected` but never in `attach`; they are already in `event.prompt.skills`.
@@ -2130,14 +2159,27 @@ export interface RoutingRenderContext {
 export function setRoutingRenderContext(sessionID: string, value: RoutingRenderContext): void;
 export function getRoutingRenderContext(sessionID: string): RoutingRenderContext | undefined;
 export function clearRoutingRenderContext(sessionID: string): void;
+export function clearAllRoutingRenderContexts(): void;
 ```
+
+The render-context cache is capped at 100 entries and evicts the least-recently inserted/updated entry. The plugin clears it on disposal so a long-lived OpenCode server does not retain one object per closed session.
 
 `src/routing/persistence.ts` owns the storage key and the load/save pair:
 
 ```ts
 export const SESSION_STORAGE_PREFIX = "php-toolkit:session:";
+export const SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 export function serializeStorageState(state: SessionRoutingState): StoredSessionRoutingState;
 export function hydrateStorageState(raw: unknown): SessionRoutingState | null;
+
+export function cacheSessionState(
+  sessions: Map<string, SessionRoutingState>,
+  state: SessionRoutingState,
+): void;
+export async function loadPersistedSessionState(
+  storage: { get(key: string): Promise<unknown> },
+  sessionID: string,
+): Promise<SessionRoutingState | null>;
 
 export async function loadOrCreateState(
   storage: { get(key: string): Promise<unknown>; set(key: string, value: unknown): Promise<void> },
@@ -2145,13 +2187,26 @@ export async function loadOrCreateState(
   input: CreateSessionStateInput,
 ): Promise<SessionRoutingState>;
 
+export interface SessionPruneStorage {
+  scan(options: { prefix: string; after?: string; limit?: number }): Promise<{
+    entries: ReadonlyArray<{ key: string; value: unknown }>;
+    next?: string;
+  }>;
+  remove(key: string): Promise<void>;
+}
+export async function pruneStaleRoutingSessions(
+  storage: SessionPruneStorage,
+  now?: number,
+  retentionMs?: number,
+): Promise<number>;
+
 export async function persistStorageState(
   storage: { set(key: string, value: unknown): Promise<void> },
   state: SessionRoutingState,
 ): Promise<void>;
 ```
 
-`loadOrCreateState` reuses the in-memory entry only when `sessionID`, `projectRoot` and `projectSubpath` match. Otherwise it hydrates `php-toolkit:session:<sessionID>`, validates the same scope, and falls back to `createSessionState`. A storage read failure is logged and treated as a cache miss, so routing still proceeds. It stores the result in the per-plugin `sessions` map. `persistStorageState` writes `serializeStorageState(state)` best-effort; the orchestrator catches its errors. `serializeStorageState()` must omit project paths from metrics, but storage may retain root locally; do not export. `hydrateStorageState()` validates `schemaVersion`, arrays, enum values and the optional `maintainSubtype`; corrupt documents return `null` and are ignored. A missing `maintainSubtype` hydrates as `null`, so pre-existing schema-v1 documents remain readable.
+`cacheSessionState` caps the in-memory cache at 100 entries and evicts the stalest entry by `lastPromptAt`/`taskStartedAt`. `loadPersistedSessionState` returns a validated persisted state without creating one; `loadOrCreateState` uses it and still falls back to `createSessionState` on an absent or invalid document. A storage read failure is logged and treated as a cache miss, so routing still proceeds. Event handlers call `loadPersistedSessionState` on a cache miss and validate the persisted root/subpath against the current session before applying the event. `pruneStaleRoutingSessions` removes schema-v1 documents older than 30 days using `storage.scan`/`remove`, and the plugin runs it best-effort at startup. `persistStorageState` serializes each snapshot at call time and chains `storage.set` per session, so concurrent prompt/event writes cannot overwrite a newer snapshot with an older one; the orchestrator and subscription pump catch its errors. Wall-clock retention is a safety valve; current in-memory sessions are cleared on plugin disposal. `serializeStorageState()` must omit project paths from metrics, but storage may retain root locally; do not export. `hydrateStorageState()` validates `schemaVersion`, bounded arrays/strings, enum values, non-negative integer counters and the optional `maintainSubtype`; corrupt documents return `null` and are ignored. A missing `maintainSubtype` hydrates as `null`, so pre-existing schema-v1 documents remain readable.
 
 Storage key:
 
@@ -2396,7 +2451,7 @@ export async function runRouting(
       selected: config.autoSkills === "off" ? [] : permissioned.selected,
       dropped: config.autoSkills === "off" ? [] : permissioned.dropped,
       attach,
-    });
+    }, root);
   } catch (err) {
     console.error(`[php-toolkit] routing metrics failed: ${(err as Error).message}`);
   }
@@ -2414,19 +2469,20 @@ async function recordRoutingMetrics(
   current: ClassificationResult,
   boundary: ReturnType<typeof transitionTask>,
   selection: ReturnType<typeof filterByPermission>,
+  projectRoot: string,
 ): Promise<void> {
-  if (current.intents.length) await metrics.recordRouting({ kind: "intents", values: current.intents });
-  if (current.concerns.length) await metrics.recordRouting({ kind: "concerns", values: current.concerns });
-  for (const id of selection.selected) await metrics.recordRouting({ kind: "selected", skill: id });
+  if (current.intents.length) await metrics.recordRouting({ kind: "intents", values: current.intents }, projectRoot);
+  if (current.concerns.length) await metrics.recordRouting({ kind: "concerns", values: current.concerns }, projectRoot);
+  for (const id of selection.selected) await metrics.recordRouting({ kind: "selected", skill: id }, projectRoot);
   for (const item of selection.attach) {
-    if (item.status === "pending") await metrics.recordRouting({ kind: "unactivated", skill: item.id });
+    if (item.status === "pending") await metrics.recordRouting({ kind: "unactivated", skill: item.id }, projectRoot);
   }
-  for (const drop of selection.dropped) await metrics.recordRouting({ kind: "dropped", reason: drop.reason });
+  for (const drop of selection.dropped) await metrics.recordRouting({ kind: "dropped", reason: drop.reason }, projectRoot);
   if (boundary.reset) {
-    await metrics.recordRouting({ kind: "task-generation" });
-    await metrics.recordRouting({ kind: "reset" });
+    await metrics.recordRouting({ kind: "task-generation" }, projectRoot);
+    await metrics.recordRouting({ kind: "reset" }, projectRoot);
   } else if (boundary.mode === "continuation" || boundary.mode === "ambiguous-continuation") {
-    await metrics.recordRouting({ kind: "continuation" });
+    await metrics.recordRouting({ kind: "continuation" }, projectRoot);
   }
 }
 ```
@@ -2458,6 +2514,31 @@ const config = readToolkitConfig(ctx.options);
 const profileCache = new ProjectProfileCache();
 const sessions = new Map<string, SessionRoutingState>();
 const contentLengths = new Map<string, number>();
+// Best-effort housekeeping for stale routing documents.
+void pruneStaleRoutingSessions(ctx.storage).catch((err: unknown) => {
+  console.warn(`[php-toolkit] stale session state prune failed: ${(err as Error).message}`);
+});
+const routingStateForEvent = async (
+  sessionID: string,
+): Promise<SessionRoutingState | undefined> => {
+  const cached = sessions.get(sessionID);
+  if (cached) return cached;
+  let session;
+  try {
+    session = await ctx.session.get({ sessionID });
+  } catch (err) {
+    console.warn(`[php-toolkit] could not resolve session for routing event: ${(err as Error).message}`);
+    return undefined;
+  }
+  const root = session?.location?.directory ?? ctx.location.directory;
+  const subpath = session?.subpath ?? null;
+  const hydrated = await loadPersistedSessionState(ctx.storage, sessionID);
+  if (!hydrated || hydrated.projectRoot !== root || hydrated.projectSubpath !== subpath) {
+    return undefined;
+  }
+  cacheSessionState(sessions, hydrated);
+  return hydrated;
+};
 // inside the skill loop, after parseFrontmatter:
 contentLengths.set(id, Buffer.byteLength(content, "utf8"));
 ```
@@ -2829,7 +2910,7 @@ describe("routing events", () => {
 
 - [ ] **Step 2: Implement subscription pump**
 
-`src/routing/events.ts` exports `applySkillActivatedEvent(state, event)` and `applyPermissionsEvent(state, rules)`. The former ignores events whose `sessionID` does not match `state.sessionID`; the latter re-evaluates every `unactivatedSkills` entry and never attaches. The pump uses the `sessions` map created in Task 11 and imports `markActivated`, `persistStorageState` and the event functions. Wrap each `persistStorageState` call in the pump in its own `try/catch`: a storage failure is logged and must not stop the subscription.
+`src/routing/events.ts` exports `applySkillActivatedEvent(state, event)` and `applyPermissionsEvent(state, rules)`. The former ignores events whose `sessionID` does not match `state.sessionID`; the latter re-evaluates every `unactivatedSkills` entry and never attaches. The pump first checks the `sessions` map created in Task 11; on a miss it resolves the session's current root/subpath, validates it against the persisted state, and hydrates that state if the scope still matches. It imports `markActivated`, `applySkillActivatedEvent`, `applyPermissionsEvent`, `loadPersistedSessionState`, `cacheSessionState`, `persistStorageState` and the event functions. Wrap each `persistStorageState` call in the pump in its own `try/catch`: a storage failure is logged and must not stop the subscription. The activation metric is attributed to the session's persisted `projectRoot`, not the default active project.
 
 In `setup`, before returning cleanup:
 
@@ -2841,11 +2922,14 @@ void (async () => {
     for await (const event of stream) {
       if (eventsAbort.signal.aborted) break;
       if (event.type === "session.skill.activated") {
-        const state = sessions.get(event.data.sessionID);
+        const state = await routingStateForEvent(event.data.sessionID);
         if (state) {
-          markActivated(state, event.data.id);
+          applySkillActivatedEvent(state, { sessionID: event.data.sessionID, id: event.data.id });
           try {
-            await metrics.recordRouting({ kind: "activated", skill: event.data.id });
+            await metrics.recordRouting(
+              { kind: "activated", skill: event.data.id },
+              state.projectRoot,
+            );
           } catch (err) {
             console.error(`[php-toolkit] routing metrics failed: ${(err as Error).message}`);
           }
@@ -2856,7 +2940,7 @@ void (async () => {
           }
         }
       } else if (event.type === "session.permissions") {
-        const state = sessions.get(event.data.sessionID);
+        const state = await routingStateForEvent(event.data.sessionID);
         if (state) {
           applyPermissionsEvent(state, event.data.permissions);
           try {
@@ -2873,7 +2957,7 @@ void (async () => {
 })();
 ```
 
-Cleanup aborts with `eventsAbort.abort()`. If the runtime supports an explicit subscription dispose object, use it; otherwise abort the pump.
+Cleanup aborts with `eventsAbort.abort()`, flushes metrics, clears all render contexts and the in-memory session cache, then disposes registrations. If the runtime supports an explicit subscription dispose object, use it; otherwise abort the pump.
 
 Fallback when event subscription fails:
 
@@ -3062,12 +3146,26 @@ export function fakePluginContext(overrides: {
   options?: Record<string, unknown>;
   roots?: Record<string, string>;
   events?: Array<{ type: string; data: any }>;
+  storageSeed?: Record<string, unknown>;
 } = {}) {
   const skills = new Set<unknown>();
   const promptHooks: Array<(event: any) => Promise<void> | void> = [];
   const contextHooks: Array<(event: any) => Promise<void> | void> = [];
   const compactionHooks: Array<(event: any) => Promise<void> | void> = [];
   const defaultRoot = resolve("fixtures/php-app");
+  const storageEntries = new Map<string, unknown>(Object.entries(overrides.storageSeed ?? {}));
+  const storage = {
+    get: async (key: string) => storageEntries.get(key),
+    set: async (key: string, value: unknown) => { storageEntries.set(key, value); },
+    remove: async (key: string) => { storageEntries.delete(key); },
+    scan: async (options: { prefix: string; after?: string; limit?: number }) => ({
+      entries: [...storageEntries.entries()]
+        .filter(([key]) => key.startsWith(options.prefix) && (!options.after || key > options.after))
+        .sort(([a], [b]) => a.localeCompare(b))
+        .slice(0, options.limit ?? 100)
+        .map(([key, value]) => ({ key, value })),
+    }),
+  };
   let releaseEvents = (): void => {};
   const eventGate = new Promise<void>((resolve) => { releaseEvents = resolve; });
   return {
@@ -3095,7 +3193,8 @@ export function fakePluginContext(overrides: {
     command: { transform: async (cb: any) => { cb({ add() {} }); return { dispose: async () => {} }; } },
     tool: { transform: async (cb: any) => { cb({ namespace() {}, add() {} }); return { dispose: async () => {} }; }, hook: async () => ({ dispose: async () => {} }) },
     skill: { transform: async (cb: any) => { cb({ get: () => undefined, add(skill: unknown) { skills.add(skill); } }); return { dispose: async () => {} }; } },
-    storage: { get: async () => undefined, set: async () => {}, remove: async () => {}, scan: async () => ({ entries: [] }) },
+    storage,
+    storageEntries,
     event: {
       subscribe: async function* () {
         if (!overrides.events) return;
@@ -3111,7 +3210,7 @@ export function fakePluginContext(overrides: {
 }
 ```
 
-Use `fakePluginContext({ agent: null })` for the non-PHP case, `fakePluginContext({ permissions: [...] })` for denied/ask cases, and `fakePluginContext({ options: { autoSkills: "hint" } })` / `"off"` for the escape-hatch cases. Unit tests may call `applySkillActivatedEvent`/`applyPermissionsEvent` directly, but at least one integration test must drive the real subscription pump: pass `events`, trigger the prompt, call `releaseEvents()`, and wait for the state part to reflect activation.
+Use `fakePluginContext({ agent: null })` for the non-PHP case, `fakePluginContext({ permissions: [...] })` for denied/ask cases, and `fakePluginContext({ options: { autoSkills: "hint" } })` / `"off"` for the escape-hatch cases. Unit tests may call `applySkillActivatedEvent`/`applyPermissionsEvent` directly, but at least one integration test must drive the real subscription pump. Seed `storageSeed` with `serializeStorageState(...)` from another session and emit events before any prompt to prove restart-safe hydration; also pass `events`, trigger the prompt, call `releaseEvents()`, and wait for the state part to reflect activation.
 
 Test cases:
 
@@ -3124,6 +3223,7 @@ Test cases:
 - Ask skill is attached once; second prompt does not re-attach while awaiting.
 - Activation event marks loaded; attached-but-denied does not.
 - The event subscription pump applies a `session.skill.activated` event end to end.
+- A pre-existing persisted session hydrates for activation and permissions events after a restart, and a scope mismatch is rejected.
 - A denied explicit skill stays in `event.prompt.skills` and is recorded as denied.
 - A storage write failure is logged and does not drop attachments.
 - Context hook removes old parts, pushes L0 and at most one state part.

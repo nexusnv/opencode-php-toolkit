@@ -83,13 +83,27 @@ export function applyTaskBoundary(state, boundary, profile) {
     return state;
 }
 const renderContexts = new Map();
+const MAX_ROUTING_CONTEXTS = 100;
 export function setRoutingRenderContext(sessionID, value) {
+    // Re-insert to move the entry to the end of the LRU, then evict the oldest.
+    if (renderContexts.has(sessionID))
+        renderContexts.delete(sessionID);
     renderContexts.set(sessionID, value);
+    while (renderContexts.size > MAX_ROUTING_CONTEXTS) {
+        const oldest = renderContexts.keys().next().value;
+        if (oldest === undefined)
+            break;
+        renderContexts.delete(oldest);
+    }
 }
 export function getRoutingRenderContext(sessionID) {
     return renderContexts.get(sessionID);
 }
 export function clearRoutingRenderContext(sessionID) {
     renderContexts.delete(sessionID);
+}
+/** Drops every render context held by this plugin process. */
+export function clearAllRoutingRenderContexts() {
+    renderContexts.clear();
 }
 //# sourceMappingURL=state.js.map

@@ -154,7 +154,9 @@ export async function runRouting(
       selected: config.autoSkills === "off" ? [] : permissioned.selected,
       dropped: config.autoSkills === "off" ? [] : permissioned.dropped,
       attach,
-    });
+    },
+    root,
+  );
   } catch (err) {
     console.error(`[php-toolkit] routing metrics failed: ${(err as Error).message}`);
   }
@@ -173,31 +175,32 @@ async function recordRoutingMetrics(
   current: ClassificationResult,
   boundary: ReturnType<typeof transitionTask>,
   selection: ReturnType<typeof filterByPermission>,
+  projectRoot: string,
 ): Promise<void> {
   if (current.intents.length) {
-    await metrics.recordRouting({ kind: "intents", values: current.intents });
+    await metrics.recordRouting({ kind: "intents", values: current.intents }, projectRoot);
   }
   if (current.concerns.length) {
-    await metrics.recordRouting({ kind: "concerns", values: current.concerns });
+    await metrics.recordRouting({ kind: "concerns", values: current.concerns }, projectRoot);
   }
   for (const id of selection.selected) {
-    await metrics.recordRouting({ kind: "selected", skill: id });
+    await metrics.recordRouting({ kind: "selected", skill: id }, projectRoot);
   }
   for (const item of selection.attach) {
     if (item.status === "pending") {
-      await metrics.recordRouting({ kind: "unactivated", skill: item.id });
+      await metrics.recordRouting({ kind: "unactivated", skill: item.id }, projectRoot);
     }
   }
   for (const drop of selection.dropped) {
-    await metrics.recordRouting({ kind: "dropped", reason: drop.reason });
+    await metrics.recordRouting({ kind: "dropped", reason: drop.reason }, projectRoot);
   }
   if (boundary.reset) {
-    await metrics.recordRouting({ kind: "task-generation" });
-    await metrics.recordRouting({ kind: "reset" });
+    await metrics.recordRouting({ kind: "task-generation" }, projectRoot);
+    await metrics.recordRouting({ kind: "reset" }, projectRoot);
   } else if (
     boundary.mode === "continuation" ||
     boundary.mode === "ambiguous-continuation"
   ) {
-    await metrics.recordRouting({ kind: "continuation" });
+    await metrics.recordRouting({ kind: "continuation" }, projectRoot);
   }
 }

@@ -11,8 +11,13 @@ import { readToolkitConfig } from "./config.js";
 import { ProjectProfileCache } from "./profile.js";
 import { runRouting, runRoutingSafely } from "./routing/orchestrator.js";
 import type { SessionRoutingState } from "./routing/types.js";
-import { getRoutingRenderContext } from "./routing/state.js";
-import { persistStorageState } from "./routing/persistence.js";
+import { clearAllRoutingRenderContexts, getRoutingRenderContext } from "./routing/state.js";
+import {
+  cacheSessionState,
+  loadPersistedSessionState,
+  persistStorageState,
+  pruneStaleRoutingSessions,
+} from "./routing/persistence.js";
 import {
   applyPermissionsEvent,
   applySkillActivatedEvent,
@@ -49,6 +54,32 @@ export default Plugin.define({
     const profileCache = new ProjectProfileCache();
     const sessions = new Map<string, SessionRoutingState>();
     const contentLengths = new Map<string, number>();
+    // Best-effort housekeeping for stale routing documents. A failure must
+    // not prevent the plugin from starting.
+    void pruneStaleRoutingSessions(ctx.storage).catch((err: unknown) => {
+      console.warn(`[php-toolkit] stale session state prune failed: ${(err as Error).message}`);
+    });
+    const routingStateForEvent = async (
+      sessionID: string,
+    ): Promise<SessionRoutingState | undefined> => {
+      const cached = sessions.get(sessionID);
+      if (cached) return cached;
+      let session;
+      try {
+        session = await ctx.session.get({ sessionID });
+      } catch (err) {
+        console.warn(`[php-toolkit] could not resolve session for routing event: ${(err as Error).message}`);
+        return undefined;
+      }
+      const root = session?.location?.directory ?? ctx.location.directory;
+      const subpath = session?.subpath ?? null;
+      const hydrated = await loadPersistedSessionState(ctx.storage, sessionID);
+      if (!hydrated || hydrated.projectRoot !== root || hydrated.projectSubpath !== subpath) {
+        return undefined;
+      }
+      cacheSessionState(sessions, hydrated);
+      return hydrated;
+    };
 
     /**
      * Wraps a tool so the metric reflects what the tool actually did.
@@ -426,14 +457,17 @@ export default Plugin.define({
         for await (const event of stream) {
           if (eventsAbort.signal.aborted) break;
           if (event.type === "session.skill.activated") {
-            const state = sessions.get(event.data.sessionID);
+            const state = await routingStateForEvent(event.data.sessionID);
             if (state) {
               applySkillActivatedEvent(state, {
                 sessionID: event.data.sessionID,
                 id: event.data.id,
               });
               try {
-                await metrics.recordRouting({ kind: "activated", skill: event.data.id });
+                await metrics.recordRouting(
+                  { kind: "activated", skill: event.data.id },
+                  state.projectRoot,
+                );
               } catch (err) {
                 console.error(`[php-toolkit] routing metrics failed: ${(err as Error).message}`);
               }
@@ -444,7 +478,7 @@ export default Plugin.define({
               }
             }
           } else if (event.type === "session.permissions") {
-            const state = sessions.get(event.data.sessionID);
+            const state = await routingStateForEvent(event.data.sessionID);
             if (state) {
               applyPermissionsEvent(state, event.data.permissions);
               try {
@@ -467,6 +501,8 @@ export default Plugin.define({
     return async () => {
       eventsAbort.abort();
       await metrics.flushAll();
+      clearAllRoutingRenderContexts();
+      sessions.clear();
       for (const r of registrations.splice(0)) {
         void r.dispose().catch(() => {});
       }

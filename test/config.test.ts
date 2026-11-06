@@ -31,6 +31,15 @@ describe("readToolkitConfig", () => {
     expect(warnings.length).toBeGreaterThan(0);
   });
 
+  it("caps maxSkillChars at the hard ceiling instead of silently exceeding it", () => {
+    const warnings: string[] = [];
+    const config = readToolkitConfig({ maxSkillChars: 100_000 }, (message) =>
+      warnings.push(message),
+    );
+    expect(config.maxSkillChars).toBe(16_000);
+    expect(warnings).toContain("maxSkillChars capped at 16000");
+  });
+
   it("autoSkills off disables routing but not the constitution", () => {
     expect(readToolkitConfig({ autoSkills: "off" }).autoSkills).toBe("off");
   });

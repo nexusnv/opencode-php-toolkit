@@ -1,12 +1,17 @@
+export const MAX_ROUTER_SKILL_CHARS = 16_000;
+
 export interface ToolkitConfig {
   autoSkills: "attach" | "hint" | "off";
   maxSkills: number;
   maxSkillChars: number;
   // Architecture workflow mode. Phase 1 uses "off" to disable classifier
-  // design gating; the full architecture workflow ships in a later phase.
+  // design gating; "strict" is reserved for the later approval workflow.
   architectureMode: "risk" | "strict" | "off";
+  // Reserved for later phases; parsed but inert in Phase 1.
   architectureScan: "tool" | "auto" | "off";
+  // Reserved for later phases; Phase 1 is always silent.
   announceSelections: "on-change" | "always" | "off";
+  // Reserved for later phases; parsed but inert in Phase 1.
   verification: "remind" | "off";
 }
 
@@ -44,8 +49,21 @@ export function readToolkitConfig(
   const maxSkills = boundedInt(input.maxSkills, 1, 4);
   if (maxSkills === undefined && input.maxSkills !== undefined) warn("invalid maxSkills; using default");
   else if (maxSkills !== undefined) out.maxSkills = maxSkills;
-  const maxSkillChars = boundedInt(input.maxSkillChars, 1, 100_000);
-  if (maxSkillChars === undefined && input.maxSkillChars !== undefined) warn("invalid maxSkillChars; using default");
-  else if (maxSkillChars !== undefined) out.maxSkillChars = maxSkillChars;
+  const rawMaxSkillChars = input.maxSkillChars;
+  if (
+    typeof rawMaxSkillChars === "number" &&
+    Number.isFinite(rawMaxSkillChars) &&
+    rawMaxSkillChars > MAX_ROUTER_SKILL_CHARS
+  ) {
+    out.maxSkillChars = MAX_ROUTER_SKILL_CHARS;
+    warn(`maxSkillChars capped at ${MAX_ROUTER_SKILL_CHARS}`);
+  } else {
+    const maxSkillChars = boundedInt(rawMaxSkillChars, 1, MAX_ROUTER_SKILL_CHARS);
+    if (maxSkillChars === undefined && input.maxSkillChars !== undefined) {
+      warn("invalid maxSkillChars; using default");
+    } else if (maxSkillChars !== undefined) {
+      out.maxSkillChars = maxSkillChars;
+    }
+  }
   return out;
 }
