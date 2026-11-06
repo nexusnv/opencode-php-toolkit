@@ -12,6 +12,11 @@ import { ProjectProfileCache } from "./profile.js";
 import { runRouting, runRoutingSafely } from "./routing/orchestrator.js";
 import type { SessionRoutingState } from "./routing/types.js";
 import { getRoutingRenderContext } from "./routing/state.js";
+import { persistStorageState } from "./routing/persistence.js";
+import {
+  applyPermissionsEvent,
+  applySkillActivatedEvent,
+} from "./routing/events.js";
 import {
   l0Part,
   removePhpToolkitParts,
@@ -414,7 +419,53 @@ export default Plugin.define({
       console.error(`[php-toolkit] hook registration failed: ${(err as Error).message}`);
     }
 
+    const eventsAbort = new AbortController();
+    void (async () => {
+      try {
+        const stream = await ctx.event.subscribe({ signal: eventsAbort.signal });
+        for await (const event of stream) {
+          if (eventsAbort.signal.aborted) break;
+          if (event.type === "session.skill.activated") {
+            const state = sessions.get(event.data.sessionID);
+            if (state) {
+              applySkillActivatedEvent(state, {
+                sessionID: event.data.sessionID,
+                id: event.data.id,
+              });
+              try {
+                await metrics.recordRouting({ kind: "activated", skill: event.data.id });
+              } catch (err) {
+                console.error(`[php-toolkit] routing metrics failed: ${(err as Error).message}`);
+              }
+              try {
+                await persistStorageState(ctx.storage, state);
+              } catch (err) {
+                console.error(`[php-toolkit] routing persistence failed: ${(err as Error).message}`);
+              }
+            }
+          } else if (event.type === "session.permissions") {
+            const state = sessions.get(event.data.sessionID);
+            if (state) {
+              applyPermissionsEvent(state, event.data.permissions);
+              try {
+                await persistStorageState(ctx.storage, state);
+              } catch (err) {
+                console.error(`[php-toolkit] routing persistence failed: ${(err as Error).message}`);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        if (!eventsAbort.signal.aborted) {
+          console.error(
+            `[php-toolkit] session event subscription failed: ${(err as Error).message}`,
+          );
+        }
+      }
+    })();
+
     return async () => {
+      eventsAbort.abort();
       await metrics.flushAll();
       for (const r of registrations.splice(0)) {
         void r.dispose().catch(() => {});
