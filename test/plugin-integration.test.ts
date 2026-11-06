@@ -90,9 +90,9 @@ function fakePluginContext(overrides: FakeOverrides = {}) {
       },
     },
     storage: {
-      get: async () => undefined,
-      set: async () => {},
-      remove: async () => {},
+      get: async (_key: string) => undefined,
+      set: async (_key: string, _value: unknown) => {},
+      remove: async (_key: string) => {},
       scan: async () => ({ entries: [] }),
     },
     event: { subscribe: async function* () {} },
@@ -241,6 +241,50 @@ describe("plugin routing integration", () => {
     expect(fake.prompted.at(-1)?.text).toContain(
       "Dropped: php-testing (permission:denied)",
     );
+    await cleanup();
+  });
+
+  it("keeps an explicit denied skill in the prompt and records denial", async () => {
+    const { fake, cleanup } = await setupPlugin({
+      permissions: [{ action: "skill", resource: "php-standards", effect: "deny" }],
+    });
+    const writes: Array<{ key: string; value: any }> = [];
+    fake.storage.set = async (key: string, value: unknown) => {
+      writes.push({ key, value });
+    };
+    const explicit = {
+      id: "php-standards",
+      mention: { start: 0, end: 13, text: "@php-standards" },
+    };
+    const event = promptEvent("s1", "Review the diff for PSR-12 violations.", {
+      files: phpFile,
+      skills: [explicit],
+    });
+    await fake.triggerPromptHook(event);
+    expect(event.prompt.skills).toContainEqual(explicit);
+    expect(
+      event.prompt.skills?.filter((skill) => skill.id === "php-standards"),
+    ).toHaveLength(1);
+
+    const stored = writes.find((write) => write.key === "php-toolkit:session:s1")?.value;
+    expect(stored?.unactivatedSkills).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "php-standards", status: "denied" }),
+      ]),
+    );
+    await cleanup();
+  });
+
+  it("still admits the prompt when session persistence fails", async () => {
+    const { fake, cleanup } = await setupPlugin();
+    fake.storage.set = async () => {
+      throw new Error("storage unavailable");
+    };
+    const event = promptEvent("s1", "Add a new feature with tests", {
+      files: phpTestFile,
+    });
+    await fake.triggerPromptHook(event);
+    expect(event.prompt.skills?.map((skill) => skill.id)).toContain("php-testing");
     await cleanup();
   });
 
