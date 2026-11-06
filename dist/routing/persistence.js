@@ -54,6 +54,14 @@ function parsePreviousTask(value) {
         },
     };
 }
+function parseMaintainSubtype(value) {
+    if (value === undefined || value === null)
+        return { ok: true, value: null };
+    if (value === "modernization" || value === "dependency" || value === "refactor") {
+        return { ok: true, value };
+    }
+    return { ok: false };
+}
 function parseUnactivatedSkills(value) {
     if (!Array.isArray(value))
         return null;
@@ -126,6 +134,7 @@ export function serializeStorageState(state) {
             : null,
         activeIntents: [...state.activeIntents],
         activeConcerns: [...state.activeConcerns],
+        maintainSubtype: state.maintainSubtype,
         selectedSkills: [...state.selectedSkills],
         attachedSkills: [...state.attachedSkills],
         activatedSkills: [...state.activatedSkills],
@@ -162,6 +171,9 @@ export function hydrateStorageState(raw) {
     const previousTask = parsePreviousTask(raw.previousTask);
     if (!previousTask.ok)
         return null;
+    const maintainSubtype = parseMaintainSubtype(raw.maintainSubtype);
+    if (!maintainSubtype.ok)
+        return null;
     if (!isIntentArray(raw.activeIntents) ||
         !isConcernArray(raw.activeConcerns) ||
         !isStringArray(raw.selectedSkills) ||
@@ -185,6 +197,7 @@ export function hydrateStorageState(raw) {
         previousTask: previousTask.value,
         activeIntents: [...raw.activeIntents],
         activeConcerns: [...raw.activeConcerns],
+        maintainSubtype: maintainSubtype.value,
         selectedSkills: [...raw.selectedSkills],
         attachedSkills: [...raw.attachedSkills],
         activatedSkills: new Set(raw.activatedSkills),

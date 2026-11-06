@@ -97,16 +97,26 @@ export function selectSkills(input: SelectorInput): SelectorResult {
   const routerSkillCap = Math.min(Math.max(1, config.maxSkills), 4);
   const routerCharCap = Math.min(Math.max(1, config.maxSkillChars), 16_000);
   let totalChars = 0;
+  // Explicit skills bypass the soft budget, so router selections keep their
+  // own count and character budget.
+  let routerSkillCount = 0;
+  let routerChars = 0;
 
   const drop = (id: string, reason: string): void => {
     if (droppedSet.has(id)) return;
     droppedSet.add(id);
     dropped.push({ id, reason });
   };
+  const removeDrop = (id: string): void => {
+    const index = dropped.findIndex((entry) => entry.id === id);
+    if (index >= 0) dropped.splice(index, 1);
+    droppedSet.delete(id);
+  };
 
   // Explicit skills are user intent: keep every one, never attach them again,
   // and let them bypass the soft budget.
   const explicitIDs = [...new Set(explicit.map((entry) => entry.id))];
+  const explicitSet = new Set(explicitIDs);
   for (const id of explicitIDs) {
     selected.push(id);
     selectedSet.add(id);
@@ -137,12 +147,12 @@ export function selectSkills(input: SelectorInput): SelectorResult {
       return;
     }
 
-    if (selected.length >= routerSkillCap) {
+    if (routerSkillCount >= routerSkillCap) {
       drop(id, "budget:max-skills");
       return;
     }
     const length = contentLength(contentLengths, id);
-    if (totalChars + length > routerCharCap) {
+    if (routerChars + length > routerCharCap) {
       drop(id, "budget:max-chars");
       return;
     }
@@ -151,6 +161,8 @@ export function selectSkills(input: SelectorInput): SelectorResult {
     selectedSet.add(id);
     attach.push({ id });
     totalChars += length;
+    routerChars += length;
+    routerSkillCount += 1;
     reasonCodes.push(reason);
   };
 
@@ -210,9 +222,11 @@ export function selectSkills(input: SelectorInput): SelectorResult {
 
   // Question form suppresses intent co-skills entirely; only concern skills
   // that clear the concern threshold are eligible.
+  const coSkillSet = new Set<string>();
   if (!questionForm) {
     for (const intent of effectiveIntents) {
       for (const coSkill of coSkillsFor(intent)) {
+        coSkillSet.add(coSkill.id);
         tryAdd(coSkill.id, coSkill.reason);
       }
     }
@@ -233,6 +247,78 @@ export function selectSkills(input: SelectorInput): SelectorResult {
 
   for (const entry of concernCandidates) {
     tryAdd(entry.id, `concern:${slug(entry.target)}`);
+  }
+
+  // High-confidence Security may use the fourth slot or replace the
+  // lowest-priority non-explicit router skill (spec §7.5). Explicit skills and
+  // permission/activation suppression always win over this exception.
+  const securityScore = scores?.["Security"] ?? 0;
+  const securityPrevious = unactivatedByID.get("php-security");
+  const securitySuppressed =
+    activated.has("php-security") ||
+    securityPrevious?.status === "denied" ||
+    securityPrevious?.status === "awaiting-approval" ||
+    (securityPrevious?.status === "pending" && securityPrevious.attempts >= 2);
+  if (
+    concerns.includes("Security") &&
+    securityScore >= 5 &&
+    !securitySuppressed &&
+    !selectedSet.has("php-security")
+  ) {
+    const securityLength = contentLength(contentLengths, "php-security");
+    const hardSkillCap = 4;
+    const hardCharCap = 16_000;
+    if (
+      selected.length < hardSkillCap &&
+      totalChars + securityLength <= hardCharCap
+    ) {
+      removeDrop("php-security");
+      selected.push("php-security");
+      selectedSet.add("php-security");
+      attach.push({ id: "php-security" });
+      totalChars += securityLength;
+      routerChars += securityLength;
+      routerSkillCount += 1;
+      reasonCodes.push("security:hard-ceiling");
+    } else {
+      // Co-skills outrank concern skills in the fixed tie-break order, so the
+      // security exception may replace only a concern/fill skill, never an
+      // explicit skill or another intent co-skill.
+      let victimIndex = -1;
+      for (let index = selected.length - 1; index >= 0; index -= 1) {
+        const id = selected[index];
+        if (explicitSet.has(id) || coSkillSet.has(id) || id === "php-security") continue;
+        if (totalChars - contentLength(contentLengths, id) + securityLength <= hardCharCap) {
+          victimIndex = index;
+          break;
+        }
+      }
+      if (victimIndex >= 0) {
+        const victim = selected[victimIndex];
+        const victimLength = contentLength(contentLengths, victim);
+        selected.splice(victimIndex, 1);
+        selectedSet.delete(victim);
+        const attachIndex = attach.findIndex((entry) => entry.id === victim);
+        if (attachIndex >= 0) attach.splice(attachIndex, 1);
+        totalChars -= victimLength;
+        routerChars -= victimLength;
+        routerSkillCount -= 1;
+        drop(victim, "budget:security-replacement");
+        removeDrop("php-security");
+        selected.push("php-security");
+        selectedSet.add("php-security");
+        attach.push({ id: "php-security" });
+        totalChars += securityLength;
+        routerChars += securityLength;
+        routerSkillCount += 1;
+        reasonCodes.push("security:hard-ceiling");
+      } else {
+        drop(
+          "php-security",
+          selected.length >= hardSkillCap ? "budget:max-skills" : "budget:max-chars",
+        );
+      }
+    }
   }
 
   // Fill any remaining budget from targets already in scope after gating.

@@ -1057,6 +1057,7 @@ export interface SessionRoutingState {
   previousTask: PreviousTask | null;
   activeIntents: Intent[];
   activeConcerns: Concern[];
+  maintainSubtype: MaintainSubtype | null;
   selectedSkills: string[];
   attachedSkills: string[];
   activatedSkills: Set<string>;
@@ -1230,6 +1231,38 @@ describe("classify", () => {
     const result = classify({ prompt: "Write a test for the payment gateway.", ...base });
     expect(result.concerns).not.toContain("Design patterns");
   });
+
+  it("treats actionable intent verbs as work, not knowledge questions", () => {
+    const build = classify({ prompt: "How do I introduce a new feature?", ...base });
+    expect(build.questionForm).toBe(false);
+    expect(build.intents).toContain("Build");
+
+    const knowledge = classify({
+      prompt: "What is the difference between Strategy and Adapter?",
+      ...base,
+    });
+    expect(knowledge.questionForm).toBe(true);
+  });
+
+  it("treats an active PHP agent as an explicit PHP-context signal", () => {
+    const result = classify({
+      prompt: "Review this component.",
+      ...base,
+      files: [],
+      agent: "php-reviewer",
+    });
+    expect(result.phpContext).toBe(true);
+    expect(result.intents).toContain("Review");
+  });
+
+  it("disables classifier design gating when architectureMode is off", () => {
+    const prompt = "Write a test for the module.";
+    const risk = classify({ prompt, ...base, architectureMode: "risk" });
+    expect(risk.concerns).not.toContain("Architecture");
+
+    const off = classify({ prompt, ...base, architectureMode: "off" });
+    expect(off.concerns).toContain("Architecture");
+  });
 });
 ```
 
@@ -1247,6 +1280,8 @@ export interface ClassifierInput {
   agent: string | null;
   profile: ProjectProfile | null;
   state: SessionRoutingState | null;
+  /** Phase 1 only uses "off" to disable concern gating. */
+  architectureMode?: "risk" | "strict" | "off";
 }
 
 export function classify(input: ClassifierInput): ClassificationResult {
@@ -1309,11 +1344,6 @@ const FRAMEWORK_TERMS = [
   "laravel", "symfony", "wordpress", "drupal", "magento",
   "cakephp", "yii", "slim", "laminas", "mezzio",
 ];
-const NON_PHP_TERMS = [
-  "javascript", "typescript", "python", "go", "rust", "java",
-  "c#", "ruby", "node", "react", "vue", "angular",
-];
-
 function hasPhpTerm(text: string): boolean {
   return PHP_TERMS.some(t => termToRegex(t).test(text));
 }
@@ -1326,7 +1356,7 @@ const phpContext = hasPhpTerm(withoutExplicit) || attachedPhpFile(files) || (age
 const frameworkContext = FRAMEWORK_TERMS.filter(t => termToRegex(t).test(withoutExplicit));
 ```
 
-PHP context is true only when one of those applies. Framework terms alone set `frameworkContext` and do **not** satisfy context; if no generic PHP signal exists, routing returns empty. This resolves the spec's overlapping wording in favor of the negative-signal rule: `laravel`, `symfony` and `wordpress` are framework hints, not generic PHP context. Corpus R44 still has PHP context because its default case attaches `src/Example.php`.
+PHP context is true only when one of those applies. Framework terms alone set `frameworkContext` and do **not** satisfy context; if no generic PHP signal exists, routing returns empty and the diagnostic list includes `framework:<name>` for each hint. This resolves the spec's overlapping wording in favor of the negative-signal rule: `laravel`, `symfony` and `wordpress` are framework hints, not generic PHP context. Corpus R44 still has PHP context because its default case attaches `src/Example.php`. An active PHP specialist agent is an explicit user choice and satisfies PHP context even when the prompt names another language; there is no separate non-PHP language veto.
 
 - [ ] **Step 5: Implement file and agent signals**
 
@@ -1369,7 +1399,11 @@ Question form is detected on the normalized, fence-stripped prompt:
 
 ```ts
 const QUESTION_FORM = /\b(what is|what are|how does|how do|why|compare|explain)\b/;
-const ACTION_VERB = /\b(add|implement|create|build|fix|debug|test|refactor|upgrade|migrate|review)\b/;
+// A question is only a knowledge question when it contains no actionable
+// build/design/debug/test/maintain verb. Keep this list aligned with the
+// intent dictionaries: nouns such as "architecture" or "pattern" do not count.
+const ACTION_VERB =
+  /\b(add|implement|create|build|extend|support|introduce|integrate|generate|scaffold|design|architect|restructure|decouple|modularize|extract|split|abstract|review|audit|inspect|assess|critique|fix|debug|reproduce|test|upgrade|migrate|refactor|modernize|deprecate|clean up|cleanup|simplify|reorganize|consolidate|rename|remove|update)\b/;
 const questionForm = QUESTION_FORM.test(withoutExplicit) && !ACTION_VERB.test(withoutExplicit);
 ```
 
@@ -1396,7 +1430,7 @@ Apply this order exactly:
 1. Score dictionary entries.
 2. Apply file/agent/profile support points.
 3. Apply negative signals.
-4. Gate Design patterns and Architecture when a Test/Debug/Review intent would otherwise match.
+4. Gate Design patterns and Architecture when a Test/Debug/Review intent would otherwise match, unless `architectureMode` is `"off"`.
 5. Apply conflicts before truncation:
    - `Debug` present and `Design < 5` → remove `Design`.
    - `Maintain` present with upgrade signal and `Debug < 5` → remove `Debug`.
@@ -1436,11 +1470,11 @@ Return:
   frameworkContext,
   phpContext,
   questionForm,
-  reasonCodes: ["intent:build", "concern:security", "file:tests", "agent:php-tester"],
+  reasonCodes: ["intent:build", "concern:security", "file:tests", "agent:php-tester", "framework:laravel"],
 }
 ```
 
-Never include the user's prompt or raw file contents.
+Never include the user's prompt or raw file contents. Framework hints use `framework:<name>` diagnostics; the state system part also carries a short framework-limit note.
 
 - [ ] **Step 8: Run classifier tests**
 
@@ -1476,6 +1510,7 @@ const active = {
   taskStartedAt: Date.now() - 60_000,
   activeIntents: ["Build" as const],
   activeConcerns: ["Security" as const],
+  maintainSubtype: null,
   previousTask: null,
 };
 
@@ -1483,7 +1518,7 @@ describe("transitionTask", () => {
   it("inherits concerns for an unambiguous continuation", () => {
     const next = transitionTask({
       prompt: "also add tests",
-      current: { intents: ["Test"], concerns: ["Testing"] },
+      current: { intents: ["Test"], concerns: ["Testing"], maintainSubtype: null },
       active,
       files: [],
       agent: null,
@@ -1497,7 +1532,7 @@ describe("transitionTask", () => {
   it("does not inherit prior concerns for an unrelated strong-intent task", () => {
     const next = transitionTask({
       prompt: "Add a CSV export feature.",
-      current: { intents: ["Build"], concerns: [] },
+      current: { intents: ["Build"], concerns: [], maintainSubtype: null },
       active,
       files: [],
       agent: null,
@@ -1511,7 +1546,7 @@ describe("transitionTask", () => {
   it("resets explicitly for a switch request", () => {
     const next = transitionTask({
       prompt: "different problem: tidy the README",
-      current: { intents: ["Maintain"], concerns: [] },
+      current: { intents: ["Maintain"], concerns: [], maintainSubtype: "refactor" },
       active,
       files: [],
       agent: null,
@@ -1524,7 +1559,7 @@ describe("transitionTask", () => {
   it("treats stale tasks older than 30 minutes as new", () => {
     const next = transitionTask({
       prompt: "summarize the project",
-      current: { intents: [], concerns: [] },
+      current: { intents: [], concerns: [], maintainSubtype: null },
       active: { ...active, taskStartedAt: Date.now() - 31 * 60_000 },
       files: [],
       agent: null,
@@ -1532,13 +1567,74 @@ describe("transitionTask", () => {
     });
     expect(next.reset).toBe(true);
   });
+
+  it("inherits the Maintain subtype across a continuation", () => {
+    const next = transitionTask({
+      prompt: "also add tests",
+      current: { intents: ["Test"], concerns: ["Testing"], maintainSubtype: null },
+      active: {
+        ...active,
+        activeIntents: ["Maintain"],
+        activeConcerns: [],
+        maintainSubtype: "modernization",
+      },
+      files: ["src/Example.php"],
+      agent: null,
+      now: Date.now(),
+    });
+    expect(next.reset).toBe(false);
+    expect(next.intents).toContain("Maintain");
+    expect(next.maintainSubtype).toBe("modernization");
+  });
+
+  it("recomputes the Maintain subtype for a new task", () => {
+    const next = transitionTask({
+      prompt: "Add a CSV export feature.",
+      current: { intents: ["Build"], concerns: [], maintainSubtype: null },
+      active: {
+        ...active,
+        activeIntents: ["Maintain"],
+        activeConcerns: [],
+        maintainSubtype: "modernization",
+      },
+      files: [],
+      agent: null,
+      now: Date.now(),
+    });
+    expect(next.reset).toBe(true);
+    expect(next.maintainSubtype).toBeNull();
+  });
+
+  it("keeps the active intent but recomputes concerns for an ambiguous continuation", () => {
+    const next = transitionTask({
+      prompt: "also refactor the module",
+      current: {
+        intents: ["Maintain"],
+        concerns: ["Architecture"],
+        maintainSubtype: "refactor",
+      },
+      active: {
+        ...active,
+        activeIntents: ["Build"],
+        activeConcerns: ["Security"],
+        maintainSubtype: null,
+      },
+      files: ["src/Example.php"],
+      agent: null,
+      now: Date.now(),
+    });
+    expect(next.reset).toBe(false);
+    expect(next.mode).toBe("ambiguous-continuation");
+    expect(next.intents).toEqual(["Build"]);
+    expect(next.concerns).toEqual(["Architecture"]);
+  });
 });
 ```
 
 - [ ] **Step 2: Implement exact transition predicates**
 
 ```ts
-import type { Concern, Intent, PreviousTask } from "./types.js";
+import type { Concern, Intent, MaintainSubtype, PreviousTask } from "./types.js";
 
 /** The subset of SessionRoutingState the boundary machine reads. */
 export interface TaskBoundaryState {
@@ -1546,12 +1642,17 @@ export interface TaskBoundaryState {
   taskStartedAt: number;
   activeIntents: Intent[];
   activeConcerns: Concern[];
+  maintainSubtype: MaintainSubtype | null;
   previousTask: PreviousTask | null;
 }
 
 export interface TaskBoundaryInput {
   prompt: string;
-  current: { intents: Intent[]; concerns: Concern[] };
+  current: {
+    intents: Intent[];
+    concerns: Concern[];
+    maintainSubtype: MaintainSubtype | null;
+  };
   active: TaskBoundaryState | null;
   files: readonly string[];
   agent: string | null;
@@ -1564,6 +1665,7 @@ export interface TaskBoundaryResult {
   taskStartedAt: number;
   intents: Intent[];
   concerns: Concern[];
+  maintainSubtype: MaintainSubtype | null;
   previousTask: PreviousTask | null;
   mode: "continuation" | "ambiguous-continuation" | "new-task" | "reset";
 }
@@ -1578,6 +1680,8 @@ Rules in order:
 5. Current strong intent (`intents.length > 0`, because the classifier only emits intents at `>=3`) and no continuation marker → new task.
 6. Short prompt with a new concern but no strong intent → ambiguous continuation.
 7. Otherwise → ambiguous continuation.
+
+For continuation and ambiguous-continuation results, inherit the active `maintainSubtype` when the current prompt did not produce a new subtype. A new task takes the current prompt's subtype (or `null`). This keeps `Maintain modernization` from falling back to `refactor` on a bare follow-up such as `also add tests`.
 
 `current` is the classifier result. "Strong intent" means `current.intents.length > 0`; the classifier already applied the `>=3` threshold. The state model does not persist prior attached-file names, so Phase 1 treats any attached file as the same-scope proxy; the session root is already the active project, and the boundary input carries only the current file list.
 
@@ -1689,6 +1793,46 @@ describe("selectSkills", () => {
     });
     expect(broad.selected).toContain("php-security");
   });
+
+  it("uses the fourth slot for a high-confidence security concern", () => {
+    const result = selectSkills({
+      prompt: "Upgrade to PHP 8.3, fix deprecations, add tests, and fix a security vulnerability.",
+      intents: ["Maintain", "Test"], concerns: ["Security", "Testing"],
+      maintainSubtype: "modernization", questionForm: false, explicit: [],
+      activated: new Set(), unactivated: [],
+      config: { maxSkills: 3, maxSkillChars: 12000 }, contentLengths,
+      scores: { Security: 6, Testing: 2, Maintain: 6, Test: 3 },
+    });
+    expect(result.selected).toHaveLength(4);
+    expect(result.selected).toContain("php-security");
+    expect(result.reasonCodes).toContain("security:hard-ceiling");
+  });
+
+  it("does not force a suppressed security concern", () => {
+    const result = selectSkills({
+      prompt: "Upgrade to PHP 8.3, fix deprecations, add tests, and fix a security vulnerability.",
+      intents: ["Maintain", "Test"], concerns: ["Security", "Testing"],
+      maintainSubtype: "modernization", questionForm: false, explicit: [],
+      activated: new Set(),
+      unactivated: [{ id: "php-security", status: "denied", attempts: 1, reason: "permission:denied" }],
+      config: { maxSkills: 3, maxSkillChars: 12000 }, contentLengths,
+      scores: { Security: 6, Testing: 2, Maintain: 6, Test: 3 },
+    });
+    expect(result.selected).not.toContain("php-security");
+  });
+
+  it("does not count explicit skills against the router budget", () => {
+    const result = selectSkills({
+      prompt: "Add a new endpoint.",
+      intents: ["Build"], concerns: [], maintainSubtype: null,
+      questionForm: false,
+      explicit: [{ id: "php-standards" }, { id: "php-debug" }, { id: "php-composer" }],
+      activated: new Set(), unactivated: [],
+      config: { maxSkills: 3, maxSkillChars: 12000 }, contentLengths,
+    });
+    expect(result.selected).toContain("php-testing");
+    expect(result.selected).toHaveLength(4);
+  });
 });
 ```
 
@@ -1754,22 +1898,24 @@ Implement this order:
    - Maintain `dependency` → `php-composer`; testing when Testing `>=2`.
    - Maintain `refactor` → `php-architecture`; testing when Testing `>=2`.
 3. Concern skills in concern-priority order.
-4. Agent default only when no intent passed; selector may produce it when caller passes `agentDefault`.
-5. Fill the remaining budget by score, only from targets present in `intents` or `concerns` after classifier gating and conflict removal; never promote a below-threshold or conflict-suppressed target just because the budget has room.
+4. High-confidence Security (`>=5`): if `php-security` is still absent, use the fourth slot or replace the lowest-priority non-explicit, non-co-skill selection. Record `security:hard-ceiling`; when a skill is replaced, record `budget:security-replacement`. Explicit skills and intent co-skills outrank the security exception.
+5. Agent default only when no intent passed; selector may produce it when caller passes `agentDefault`.
+6. Fill the remaining budget by score, only from targets present in `intents` or `concerns` after classifier gating and conflict removal; never promote a below-threshold or conflict-suppressed target just because the budget has room.
 
 Question form suppresses intent co-skills and allows only concern skills scoring `>=2`.
 
 Budget rules:
 
-- `maxSkills` default 3, hard ceiling 4 only for explicit overflow.
-- `maxSkillChars` default 12000, hard ceiling 16000 only for explicit overflow; use `contentLengths` measured from file bytes.
-- If adding a candidate exceeds either cap, drop that candidate and record `budget:max-skills` or `budget:max-chars`.
+- `maxSkills` default 3; the router's own count is independent of explicit skills.
+- `maxSkillChars` default 12000; the router's own character count is independent of explicit skills; use `contentLengths` measured from file bytes.
+- Hard ceiling 4 skills / 16000 chars applies to the total selection and is reached only for explicit overflow or a high-confidence Security concern.
+- If adding a candidate exceeds the router's soft cap, drop that candidate and record `budget:max-skills` or `budget:max-chars`.
 - Explicit skills are reported in `selected` but never in `attach`; they are already in `event.prompt.skills`.
 - Explicit overflow records `budget:explicit-overflow`, never removes explicit skills.
 - Activated skills are never attached again.
 - Router skills already recorded as `awaiting-approval` or `denied` in `unactivated` are not re-attached; explicit skills remain in the prompt but are recorded as denied/awaiting.
 - Unactivated router skills suppress after two attachment attempts in the same task generation.
-- Return stable reason codes: `intent:build`, `concern:security`, `coskill:review-standards`, `budget:max-skills`, `explicit:@php-testing`.
+- Return stable reason codes: `intent:build`, `concern:security`, `coskill:review-standards`, `security:hard-ceiling`, `budget:max-skills`, `budget:security-replacement`, `explicit:@php-testing`.
 
 - [ ] **Step 4: Run selector tests**
 
@@ -1817,10 +1963,27 @@ describe("session routing state", () => {
     const state = createSessionState({ sessionID: "s1", projectRoot: "/repo", projectSubpath: null });
     state.activeIntents = ["Build"];
     state.activeConcerns = ["Security"];
+    state.maintainSubtype = "modernization";
     const stored = serializeStorageState(state);
     const restored = hydrateStorageState(stored);
     expect(restored?.activeIntents).toEqual(["Build"]);
+    expect(restored?.maintainSubtype).toBe("modernization");
     expect(JSON.stringify(stored)).not.toContain("prompt");
+  });
+
+  it("hydrates persisted state after a restart", async () => {
+    const state = createSessionState({ sessionID: "s1", projectRoot: "/repo", projectSubpath: null });
+    state.activeIntents = ["Maintain"];
+    state.maintainSubtype = "modernization";
+    const stored = serializeStorageState(state);
+    const sessions = new Map();
+    const storage = { get: async () => stored, set: async () => {} };
+    const loaded = await loadOrCreateState(storage, sessions, {
+      sessionID: "s1", projectRoot: "/repo", projectSubpath: null,
+    });
+    expect(loaded).not.toBe(state);
+    expect(loaded.activeIntents).toEqual(["Maintain"]);
+    expect(loaded.maintainSubtype).toBe("modernization");
   });
 });
 ```
@@ -1878,6 +2041,7 @@ export function createSessionState(input: CreateSessionStateInput): SessionRouti
     previousTask: null,
     activeIntents: [],
     activeConcerns: [],
+    maintainSubtype: null,
     selectedSkills: [],
     attachedSkills: [],
     activatedSkills: new Set(),
@@ -1940,6 +2104,7 @@ export function applyTaskBoundary(
   state.previousTask = boundary.previousTask;
   state.activeIntents = [...boundary.intents];
   state.activeConcerns = [...boundary.concerns];
+  state.maintainSubtype = boundary.maintainSubtype;
   state.projectFingerprint = profile.fingerprint;
   state.projectLockFingerprint = profile.lockFingerprint;
   if (boundary.reset) {
@@ -1952,7 +2117,7 @@ export function applyTaskBoundary(
 }
 ```
 
-`markAttached` ignores IDs already activated, adds missing IDs to `attachedSkills`, increments `attempts` for an existing `unactivatedSkills` entry, and records `activation:not-confirmed` for `pending` or `permission:<status>` otherwise. `markActivated` adds to `activatedSkills` and removes the matching `unactivatedSkills` entry. `markDenied` records `permission:denied` and never adds the skill to `attachedSkills`; a router skill is filtered out before attachment, while an explicit denied skill remains in `event.prompt.skills` and is represented by its `denied` entry. `applyTaskBoundary` copies generation, start time, `previousTask`, intents and concerns from the boundary result and refreshes the project fingerprints. On a new task or reset, it resets `attempts` to `0` for `pending` entries so the two-attempt suppression is scoped to one generation; `denied` and `awaiting-approval` entries survive until a permissions event changes them.
+`markAttached` ignores IDs already activated, adds missing IDs to `attachedSkills`, increments `attempts` for an existing `unactivatedSkills` entry, and records `activation:not-confirmed` for `pending` or `permission:<status>` otherwise. `markActivated` adds to `activatedSkills` and removes the matching `unactivatedSkills` entry. `markDenied` records `permission:denied` and never adds the skill to `attachedSkills`; a router skill is filtered out before attachment, while an explicit denied skill remains in `event.prompt.skills` and is represented by its `denied` entry. `applyTaskBoundary` copies generation, start time, `previousTask`, intents, concerns and `maintainSubtype` from the boundary result and refreshes the project fingerprints. On a new task or reset, it resets `attempts` to `0` for `pending` entries so the two-attempt suppression is scoped to one generation; `denied` and `awaiting-approval` entries survive until a permissions event changes them.
 
 `state.ts` also owns the synchronous render-context map used by Task 11 and Task 12:
 
@@ -1986,7 +2151,7 @@ export async function persistStorageState(
 ): Promise<void>;
 ```
 
-`loadOrCreateState` reuses the in-memory entry only when `sessionID`, `projectRoot` and `projectSubpath` match. Otherwise it hydrates `php-toolkit:session:<sessionID>`, validates the same scope, and falls back to `createSessionState`. A storage read failure is logged and treated as a cache miss, so routing still proceeds. It stores the result in the per-plugin `sessions` map. `persistStorageState` writes `serializeStorageState(state)` best-effort; the orchestrator catches its errors. `serializeStorageState()` must omit project paths from metrics, but storage may retain root locally; do not export. `hydrateStorageState()` validates `schemaVersion`, arrays and enum values; corrupt documents return `null` and are ignored.
+`loadOrCreateState` reuses the in-memory entry only when `sessionID`, `projectRoot` and `projectSubpath` match. Otherwise it hydrates `php-toolkit:session:<sessionID>`, validates the same scope, and falls back to `createSessionState`. A storage read failure is logged and treated as a cache miss, so routing still proceeds. It stores the result in the per-plugin `sessions` map. `persistStorageState` writes `serializeStorageState(state)` best-effort; the orchestrator catches its errors. `serializeStorageState()` must omit project paths from metrics, but storage may retain root locally; do not export. `hydrateStorageState()` validates `schemaVersion`, arrays, enum values and the optional `maintainSubtype`; corrupt documents return `null` and are ignored. A missing `maintainSubtype` hydrates as `null`, so pre-existing schema-v1 documents remain readable.
 
 Storage key:
 
@@ -2169,17 +2334,17 @@ export async function runRouting(
     agent: session?.agent ?? null,
     profile,
     state,
+    architectureMode: config.architectureMode,
   });
-  // The negative-signal rule says non-PHP prompts skip routing entirely. Keep
-  // the active task untouched so an unrelated TypeScript prompt cannot advance
-  // the generation or inherit PHP concerns.
+  // Non-PHP prompts skip routing entirely. Keep the active task untouched so
+  // an unrelated prompt cannot advance the generation or inherit PHP concerns.
   if (!current.phpContext) {
     return {
       explicit: input.skills,
       attach: [],
       profile,
       state,
-      reasons: ["php-context:absent"],
+      reasons: current.reasonCodes,
     };
   }
   const boundary = transitionTask({
@@ -2195,7 +2360,7 @@ export async function runRouting(
     prompt: input.text,
     intents: withTask.activeIntents,
     concerns: withTask.activeConcerns,
-    maintainSubtype: current.maintainSubtype,
+    maintainSubtype: withTask.maintainSubtype,
     questionForm: current.questionForm,
     explicit: input.skills,
     activated: withTask.activatedSkills,
@@ -2400,6 +2565,11 @@ export function renderToolkitStatePart(context: RoutingRenderContext): string {
   lines.push(
     `Project: ${php} ${profile.type}; ${framework.length ? framework.join(" + ") : "no framework"}.`,
   );
+  if (framework.length) {
+    lines.push(
+      `Framework: ${framework.join(" + ")} — generic PHP routing; framework-specific rules live in the sibling toolkit.`,
+    );
+  }
   const mode = context.boundaryMode ? ` (${context.boundaryMode})` : "";
   lines.push(
     `Task: generation ${state.taskGeneration}${mode} | intents: ${state.activeIntents.join(", ") || "none"} | concerns: ${state.activeConcerns.join(", ") || "none"}`,
@@ -2891,12 +3061,15 @@ export function fakePluginContext(overrides: {
   permissions?: Array<{ action: string; resource: string; effect: string }>;
   options?: Record<string, unknown>;
   roots?: Record<string, string>;
+  events?: Array<{ type: string; data: any }>;
 } = {}) {
   const skills = new Set<unknown>();
   const promptHooks: Array<(event: any) => Promise<void> | void> = [];
   const contextHooks: Array<(event: any) => Promise<void> | void> = [];
   const compactionHooks: Array<(event: any) => Promise<void> | void> = [];
   const defaultRoot = resolve("fixtures/php-app");
+  let releaseEvents = (): void => {};
+  const eventGate = new Promise<void>((resolve) => { releaseEvents = resolve; });
   return {
     location: { directory: overrides.roots?.s1 ?? defaultRoot },
     options: overrides.options ?? { autoSkills: "attach" },
@@ -2923,7 +3096,14 @@ export function fakePluginContext(overrides: {
     tool: { transform: async (cb: any) => { cb({ namespace() {}, add() {} }); return { dispose: async () => {} }; }, hook: async () => ({ dispose: async () => {} }) },
     skill: { transform: async (cb: any) => { cb({ get: () => undefined, add(skill: unknown) { skills.add(skill); } }); return { dispose: async () => {} }; } },
     storage: { get: async () => undefined, set: async () => {}, remove: async () => {}, scan: async () => ({ entries: [] }) },
-    event: { subscribe: async function* () { /* tests drive events explicitly */ } },
+    event: {
+      subscribe: async function* () {
+        if (!overrides.events) return;
+        await eventGate;
+        for (const event of overrides.events) yield event;
+      },
+    },
+    releaseEvents: () => releaseEvents(),
     triggerPromptHook: async (event: any) => { for (const cb of promptHooks) await cb(event); },
     triggerContextHook: async (event: any) => { for (const cb of contextHooks) await cb(event); },
     triggerCompactionHook: async (event: any) => { for (const cb of compactionHooks) await cb(event); },
@@ -2931,7 +3111,7 @@ export function fakePluginContext(overrides: {
 }
 ```
 
-Use `fakePluginContext({ agent: null })` for the non-PHP case, `fakePluginContext({ permissions: [...] })` for denied/ask cases, and `fakePluginContext({ options: { autoSkills: "hint" } })` / `"off"` for the escape-hatch cases. The event subscription is intentionally empty; activation and permission tests call `applySkillActivatedEvent`/`applyPermissionsEvent` directly.
+Use `fakePluginContext({ agent: null })` for the non-PHP case, `fakePluginContext({ permissions: [...] })` for denied/ask cases, and `fakePluginContext({ options: { autoSkills: "hint" } })` / `"off"` for the escape-hatch cases. Unit tests may call `applySkillActivatedEvent`/`applyPermissionsEvent` directly, but at least one integration test must drive the real subscription pump: pass `events`, trigger the prompt, call `releaseEvents()`, and wait for the state part to reflect activation.
 
 Test cases:
 
@@ -2943,6 +3123,9 @@ Test cases:
 - Denied router skill is recorded and not attached.
 - Ask skill is attached once; second prompt does not re-attach while awaiting.
 - Activation event marks loaded; attached-but-denied does not.
+- The event subscription pump applies a `session.skill.activated` event end to end.
+- A denied explicit skill stays in `event.prompt.skills` and is recorded as denied.
+- A storage write failure is logged and does not drop attachments.
 - Context hook removes old parts, pushes L0 and at most one state part.
 - Two sessions in different roots get different profiles (pass `roots` to `fakePluginContext`).
 - Compaction hook does not mutate summary.
@@ -3110,6 +3293,9 @@ Check each item and record evidence in the PR description:
 - [ ] Ask skill attaches once and is not re-attached while awaiting approval.
 - [ ] Permission change clears/re-evaluates denied and awaiting-approval states.
 - [ ] New unrelated strong-intent task does not inherit prior concerns.
+- [ ] A continuation inherits the active Maintain subtype instead of falling back to `refactor`.
+- [ ] A high-confidence Security concern uses the hard ceiling instead of being dropped by the soft budget.
+- [ ] `architectureMode: "off"` disables classifier design gating without disabling routing.
 - [ ] Attached skill is not marked activated until `session.skill.activated`.
 - [ ] Compaction hook does not inject or rewrite routing state.
 - [ ] `ctx.storage` failure does not break prompt admission.

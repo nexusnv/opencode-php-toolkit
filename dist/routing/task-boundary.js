@@ -19,6 +19,13 @@ function snapshot(active) {
 function union(a, b) {
     return [...new Set([...a, ...b])];
 }
+function effectiveMaintainSubtype(current, intents, active) {
+    if (current)
+        return current;
+    if (intents.includes("Maintain"))
+        return active ?? "refactor";
+    return null;
+}
 function newTask(input, mode) {
     const previous = input.active && input.active.taskGeneration > 0 ? snapshot(input.active) : null;
     return {
@@ -27,6 +34,7 @@ function newTask(input, mode) {
         taskStartedAt: input.now,
         intents: [...input.current.intents],
         concerns: [...input.current.concerns],
+        maintainSubtype: input.current.maintainSubtype,
         previousTask: previous,
         mode,
     };
@@ -51,24 +59,28 @@ export function transitionTask(input) {
     // 3. Continuation marker with no new strong intent, or with an explicit
     // additional concern.
     if (continuationMarker && (!hasStrongIntent || ADDITIONAL_CONCERN.test(prompt))) {
+        const intents = union(active.activeIntents, current.intents);
         return {
             reset: false,
             taskGeneration: active.taskGeneration,
             taskStartedAt: active.taskStartedAt,
-            intents: union(active.activeIntents, current.intents),
+            intents,
             concerns: union(active.activeConcerns, current.concerns),
+            maintainSubtype: effectiveMaintainSubtype(current.maintainSubtype, intents, active.maintainSubtype),
             previousTask: null,
             mode: "continuation",
         };
     }
     // 4. Short prompt in the same scope with no new strong intent.
     if (shortPrompt && !hasStrongIntent && sameScope) {
+        const intents = union(active.activeIntents, current.intents);
         return {
             reset: false,
             taskGeneration: active.taskGeneration,
             taskStartedAt: active.taskStartedAt,
-            intents: union(active.activeIntents, current.intents),
+            intents,
             concerns: union(active.activeConcerns, current.concerns),
+            maintainSubtype: effectiveMaintainSubtype(current.maintainSubtype, intents, active.maintainSubtype),
             previousTask: null,
             mode: "continuation",
         };
@@ -85,6 +97,7 @@ export function transitionTask(input) {
         taskStartedAt: active.taskStartedAt,
         intents: [...active.activeIntents],
         concerns: [...current.concerns],
+        maintainSubtype: effectiveMaintainSubtype(current.maintainSubtype, active.activeIntents, active.maintainSubtype),
         previousTask: null,
         mode: "ambiguous-continuation",
     };

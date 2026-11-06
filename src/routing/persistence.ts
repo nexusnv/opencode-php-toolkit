@@ -2,6 +2,7 @@ import { CONCERNS, INTENTS } from "./types.js";
 import type {
   Concern,
   Intent,
+  MaintainSubtype,
   PreviousTask,
   SessionRoutingState,
   SkillUnactivatedStatus,
@@ -73,6 +74,16 @@ function parsePreviousTask(value: unknown): { ok: true; value: PreviousTask | nu
       concerns: [...value.concerns],
     },
   };
+}
+
+function parseMaintainSubtype(
+  value: unknown,
+): { ok: true; value: MaintainSubtype | null } | { ok: false } {
+  if (value === undefined || value === null) return { ok: true, value: null };
+  if (value === "modernization" || value === "dependency" || value === "refactor") {
+    return { ok: true, value };
+  }
+  return { ok: false };
 }
 
 function parseUnactivatedSkills(value: unknown): UnactivatedSkill[] | null {
@@ -151,6 +162,7 @@ export function serializeStorageState(state: SessionRoutingState): StoredSession
       : null,
     activeIntents: [...state.activeIntents],
     activeConcerns: [...state.activeConcerns],
+    maintainSubtype: state.maintainSubtype,
     selectedSkills: [...state.selectedSkills],
     attachedSkills: [...state.attachedSkills],
     activatedSkills: [...state.activatedSkills],
@@ -182,6 +194,9 @@ export function hydrateStorageState(raw: unknown): SessionRoutingState | null {
   const previousTask = parsePreviousTask(raw.previousTask);
   if (!previousTask.ok) return null;
 
+  const maintainSubtype = parseMaintainSubtype(raw.maintainSubtype);
+  if (!maintainSubtype.ok) return null;
+
   if (
     !isIntentArray(raw.activeIntents) ||
     !isConcernArray(raw.activeConcerns) ||
@@ -208,6 +223,7 @@ export function hydrateStorageState(raw: unknown): SessionRoutingState | null {
     previousTask: previousTask.value,
     activeIntents: [...raw.activeIntents],
     activeConcerns: [...raw.activeConcerns],
+    maintainSubtype: maintainSubtype.value,
     selectedSkills: [...raw.selectedSkills],
     attachedSkills: [...raw.attachedSkills],
     activatedSkills: new Set(raw.activatedSkills),

@@ -15,6 +15,8 @@ export interface ClassifierInput {
   agent: string | null;
   profile: ProjectProfile | null;
   state: SessionRoutingState | null;
+  /** Phase 1 only uses "off" to disable concern gating. */
+  architectureMode?: "risk" | "strict" | "off";
 }
 
 const WORD = /[\p{L}\p{N}_]/u;
@@ -69,21 +71,6 @@ const FRAMEWORK_TERMS = [
   "laminas",
   "mezzio",
 ];
-const NON_PHP_TERMS = [
-  "javascript",
-  "typescript",
-  "python",
-  "go",
-  "rust",
-  "java",
-  "c#",
-  "ruby",
-  "node",
-  "react",
-  "vue",
-  "angular",
-];
-
 
 function hasPhpTerm(text: string): boolean {
   return PHP_TERMS.some((term) => termToRegex(term).test(text));
@@ -118,8 +105,12 @@ const AGENT_DEFAULTS: Record<string, Intent> = {
 };
 
 const QUESTION_FORM = /\b(what is|what are|how does|how do|why|compare|explain)\b/;
+// A question is only a knowledge question when it contains no actionable
+// build/design/debug/test/maintain verb. Keep this list in sync with the
+// intent dictionaries: nouns such as "architecture" or "pattern" do not
+// count as action verbs.
 const ACTION_VERB =
-  /\b(add|implement|create|build|fix|debug|test|refactor|upgrade|migrate|review)\b/;
+  /\b(add|implement|create|build|extend|support|introduce|integrate|generate|scaffold|design|architect|restructure|decouple|modularize|extract|split|abstract|review|audit|inspect|assess|critique|fix|debug|reproduce|test|upgrade|migrate|refactor|modernize|deprecate|clean up|cleanup|simplify|reorganize|consolidate|rename|remove|update)\b/;
 
 const NEGATIVE_SIGNALS: ReadonlyArray<{
   terms: readonly string[];
@@ -351,7 +342,7 @@ function sortByScoreAndPriority<T extends Target>(
 }
 
 export function classify(input: ClassifierInput): ClassificationResult {
-  const { prompt, files, agent, profile } = input;
+  const { prompt, files, agent, profile, architectureMode = "risk" } = input;
   const withoutExplicit = stripCodeFences(normalizePrompt(prompt))
     .replace(/@[a-z0-9-]+/g, " ")
     .replace(/\s+/g, " ")
@@ -368,6 +359,8 @@ export function classify(input: ClassifierInput): ClassificationResult {
     (agent !== null && PHP_AGENTS.has(agent));
 
   if (!phpContext) {
+    const reasonCodes = ["php-context:absent"];
+    for (const framework of frameworkContext) reasonCodes.push(`framework:${framework}`);
     return {
       intents: [],
       concerns: [],
@@ -376,7 +369,7 @@ export function classify(input: ClassifierInput): ClassificationResult {
       frameworkContext,
       phpContext: false,
       questionForm: false,
-      reasonCodes: ["php-context:absent"],
+      reasonCodes,
     };
   }
 
@@ -449,6 +442,7 @@ export function classify(input: ClassifierInput): ClassificationResult {
 
   const rawIntents = INTENT_PRIORITY.filter((intent) => scores[intent] >= 3);
   const gatingApplies =
+    architectureMode !== "off" &&
     rawIntents.some((intent) => intent === "Test" || intent === "Debug" || intent === "Review") &&
     !rawIntents.some(
       (intent) => intent === "Build" || intent === "Design" || intent === "Maintain",
@@ -514,6 +508,7 @@ export function classify(input: ClassifierInput): ClassificationResult {
   for (const intent of intents) reasonCodes.push(`intent:${slug(intent)}`);
   for (const concern of concerns) reasonCodes.push(`concern:${slug(concern)}`);
   reasonCodes.push(...reasons);
+  for (const framework of frameworkContext) reasonCodes.push(`framework:${framework}`);
   if (questionForm) reasonCodes.push("question-form");
 
   return {

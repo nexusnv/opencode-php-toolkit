@@ -13,6 +13,15 @@ interface FakeOverrides {
   permissions?: Array<{ action: string; resource: string; effect: string }>;
   options?: Record<string, unknown>;
   roots?: Record<string, string>;
+  events?: Array<{ type: string; data: any }>;
+}
+
+async function waitFor(predicate: () => Promise<boolean>, timeout = 1000): Promise<void> {
+  const start = Date.now();
+  while (!(await predicate())) {
+    if (Date.now() - start > timeout) throw new Error("timed out waiting for condition");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 interface FakePromptEvent {
@@ -36,6 +45,10 @@ function fakePluginContext(overrides: FakeOverrides = {}) {
   const commands: Array<{ name: string; execute: (input: any) => Promise<void> }> = [];
   const prompted: Array<{ sessionID: string; text: string }> = [];
   const defaultRoot = resolve("fixtures/php-app");
+  let releaseEvents = (): void => {};
+  const eventGate = new Promise<void>((resolve) => {
+    releaseEvents = resolve;
+  });
 
   return {
     location: { directory: overrides.roots?.s1 ?? defaultRoot },
@@ -95,7 +108,14 @@ function fakePluginContext(overrides: FakeOverrides = {}) {
       remove: async (_key: string) => {},
       scan: async () => ({ entries: [] }),
     },
-    event: { subscribe: async function* () {} },
+    event: {
+      subscribe: async function* () {
+        if (!overrides.events) return;
+        await eventGate;
+        for (const event of overrides.events) yield event;
+      },
+    },
+    releaseEvents: () => releaseEvents(),
     triggerPromptHook: async (event: FakePromptEvent) => {
       for (const cb of promptHooks) await cb(event);
     },
@@ -369,6 +389,27 @@ describe("plugin routing integration", () => {
     );
     expect(firstState?.text).toContain("application");
     expect(secondState?.text).toContain("library");
+    await cleanup();
+  });
+
+  it("applies activation events from the subscription stream", async () => {
+    const { fake, cleanup } = await setupPlugin({
+      events: [
+        { type: "session.skill.activated", data: { sessionID: "s1", id: "php-testing" } },
+      ],
+    });
+    const event = promptEvent("s1", "Add a test for the parser.", { files: phpFile });
+    await fake.triggerPromptHook(event);
+    expect(event.prompt.skills).toContainEqual({ id: "php-testing" });
+
+    fake.releaseEvents();
+    await waitFor(async () => {
+      const context = { sessionID: "s1", system: [] as any[] };
+      await fake.triggerContextHook(context);
+      return context.system.some((part: any) =>
+        part.text.includes("activated=php-testing"),
+      );
+    });
     await cleanup();
   });
 

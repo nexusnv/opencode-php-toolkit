@@ -28,6 +28,7 @@ export function createSessionState(input: CreateSessionStateInput): SessionRouti
     previousTask: null,
     activeIntents: [],
     activeConcerns: [],
+    maintainSubtype: null,
     selectedSkills: [],
     attachedSkills: [],
     activatedSkills: new Set(),
@@ -100,6 +101,7 @@ export function applyTaskBoundary(
   state.previousTask = boundary.previousTask;
   state.activeIntents = [...boundary.intents];
   state.activeConcerns = [...boundary.concerns];
+  state.maintainSubtype = boundary.maintainSubtype;
   state.projectFingerprint = profile.fingerprint;
   state.projectLockFingerprint = profile.lockFingerprint;
   if (boundary.reset) {

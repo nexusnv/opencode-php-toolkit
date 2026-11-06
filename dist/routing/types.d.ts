@@ -40,6 +40,7 @@ export interface SessionRoutingState {
     previousTask: PreviousTask | null;
     activeIntents: Intent[];
     activeConcerns: Concern[];
+    maintainSubtype: MaintainSubtype | null;
     selectedSkills: string[];
     attachedSkills: string[];
     activatedSkills: Set<string>;

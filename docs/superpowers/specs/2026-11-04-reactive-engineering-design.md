@@ -482,12 +482,12 @@ switch.
 
 | Signal | Effect |
 | --- | --- |
-| Non-PHP language terms (javascript, typescript, python, go, rust, java, c#, ruby, node, react, vue, angular) with no PHP-specific term or attached PHP file | Skip routing entirely, regardless of the project profile. |
+| Non-PHP language terms (javascript, typescript, python, go, rust, java, c#, ruby, node, react, vue, angular) | Do not satisfy PHP context. They do not veto an attached `.php`/`composer.json` file or an active PHP specialist agent; the PHP-context OR rule decides. |
 | Framework-specific terms (laravel, symfony, wordpress, drupal, magento, cakephp, yii, slim, laminas, mezzio) | Set `frameworkContext`; do not subtract. If no generic PHP signal exists, skip routing and note the sibling toolkit. If generic signals exist, route generic skills and note the framework-specific limit. |
 | `just fix`, `quick fix`, `small fix`, `typo`, `rename variable`, `one-line`, `minor change` | Architecture `-3`, Patterns `-3`, Design `-1`. |
 | `no tests`, `don't add tests`, `skip tests` | Testing `-3`, Test `-2`. |
 | `no refactor`, `don't refactor` | Maintain `-3`, Architecture `-2`. |
-| Question form (`what is`, `how does`, `why`, `compare`, `explain`) with no build/design/debug/test/maintain verb | Suppress co-skills; attach only concerns scoring `>= 2`. |
+| Question form (`what is`, `how does`, `why`, `compare`, `explain`) with no actionable build/design/debug/test/maintain verb from the intent dictionaries (for example `add`, `implement`, `design`, `review`, `debug`, `test`, `upgrade`, `refactor`) | Suppress co-skills; attach only concerns scoring `>= 2`. |
 
 **Concern gating**
 
@@ -575,8 +575,12 @@ Thresholds and confidence:
   not guess.
 - A PHP repository alone is not enough; PHP context must come from a PHP-specific prompt
   term, an attached `.php`/`composer.json` file, or an active PHP agent. The profile supports
-  scoring but does not satisfy PHP context by itself.
-- Scores and dropped reasons are recorded as stable codes. Raw prompt text is never stored.
+  scoring but does not satisfy PHP context by itself. An active PHP specialist agent is an
+  explicit user choice and supplies PHP context even when the prompt names another language;
+  there is no separate non-PHP language veto.
+- Scores, framework hints and dropped reasons are recorded as stable codes. Framework hints
+  use `framework:<name>` diagnostics and a short state-part note; they never satisfy PHP
+  context on their own. Raw prompt text is never stored.
 
 **Worked examples**
 
@@ -620,6 +624,10 @@ Rules:
 
 - Concerns are merged only for a confirmed continuation. A new task recomputes them, so
   concerns cannot accumulate across unrelated work.
+- A continuation inherits the active `maintainSubtype` when the current prompt does not name
+  a new Maintain subtype. A new task recomputes the subtype from the current prompt. This
+  keeps a bare follow-up such as `also add tests` on the active modernization/dependency/
+  refactor path instead of falling back to `refactor`.
 - The previous task is retained as `previousTask` for one turn only, for reference; it never
   contributes skills.
 - If state is lost, reconstruct the active task from `php-toolkit.mode` or the last user
@@ -634,7 +642,8 @@ Default budget:
 - `maxSkills`: 3.
 - `maxSkillChars`: 12,000.
 - Hard ceiling: 4 skills / 16,000 chars, reached only when the user explicitly selects
-  skills or a high-confidence security concern must replace a lower-priority skill.
+  skills or a high-confidence security concern needs the fourth slot or replaces a
+  lower-priority skill.
 
 Selection order:
 
@@ -698,10 +707,15 @@ Rules:
   skill for that task generation and record `activation:not-confirmed`. Try again on a new
   task or after a permissions change.
 - Drop the lowest-priority non-explicit skill when over budget; record the drop reason.
+- A high-confidence Security concern (`>= 5`) may use the fourth slot or replace the
+  lowest-priority non-explicit, non-co-skill selection. Record `security:hard-ceiling`; when
+  a skill is replaced, record `budget:security-replacement`. Explicit skills and intent
+  co-skills outrank the security exception.
 - Pattern skills count as one skill each; their reference files are read on demand and are not
   part of the attachment budget.
 - The selector returns reasons as stable codes (`intent:build`, `concern:security`,
-  `file:.php`, `agent:php-architect`, `explicit:@php-testing`), never raw prompt text.
+  `file:.php`, `agent:php-architect`, `framework:laravel`, `explicit:@php-testing`,
+  `security:hard-ceiling`), never raw prompt text.
 
 ### 7.6 Explicit skills and permissions
 
@@ -756,8 +770,9 @@ On context:
    `metadata["php-toolkit"].kind`).
 2. Append the stable L0 constitution as a system part.
 3. Append one compact state system part containing the project profile, active task
-   generation, intents/concerns, selected/attached/activated skills, pending skills and the
-   verification reminder when applicable.
+   generation, intents/concerns, selected/attached/activated skills, pending skills, the
+   framework-specific limit note when the profile names a framework, and the verification
+   reminder when applicable.
 4. Do not append duplicates when the hook runs again for the same request.
 
 On skill activation:
@@ -817,6 +832,8 @@ type VerificationStatus =
   | "unavailable"
   | "error";
 
+type MaintainSubtype = "modernization" | "dependency" | "refactor";
+
 interface SessionRoutingState {
   sessionID: string;
   projectRoot: string;
@@ -832,6 +849,7 @@ interface SessionRoutingState {
   } | null;
   activeIntents: Intent[];
   activeConcerns: Concern[];
+  maintainSubtype: MaintainSubtype | null;
   selectedSkills: string[];
   attachedSkills: string[];
   activatedSkills: Set<string>;
@@ -1020,7 +1038,8 @@ scales with impact:
 - `architectureMode: "risk"` (default) — the table above.
 - `architectureMode: "strict"` — all Design/Build tasks present a design note and wait for
   approval. This is opt-in.
-- `architectureMode: "off"` — no architecture mode; skills may still attach.
+- `architectureMode: "off"` — no architecture mode and classifier design gating is disabled;
+  routing and skill attachment continue.
 
 ### 9.3 Commands and agent
 
@@ -1497,7 +1516,8 @@ Escape hatches:
 - `autoSkills: "hint"` classifies and records recommended skills in `php-toolkit.skills`
   with `mode: "hint"`, but does not modify `event.prompt.skills`. The model may load them
   explicitly.
-- `architectureMode: "off"` disables design gating.
+- `architectureMode: "off"` disables classifier design gating; routing and skill attachment
+  continue.
 - `architectureScan: "off"` disables the scanner.
 - `verification: "off"` removes the completion reminder; the tool remains available.
 

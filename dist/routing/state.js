@@ -11,6 +11,7 @@ export function createSessionState(input) {
         previousTask: null,
         activeIntents: [],
         activeConcerns: [],
+        maintainSubtype: null,
         selectedSkills: [],
         attachedSkills: [],
         activatedSkills: new Set(),
@@ -69,6 +70,7 @@ export function applyTaskBoundary(state, boundary, profile) {
     state.previousTask = boundary.previousTask;
     state.activeIntents = [...boundary.intents];
     state.activeConcerns = [...boundary.concerns];
+    state.maintainSubtype = boundary.maintainSubtype;
     state.projectFingerprint = profile.fingerprint;
     state.projectLockFingerprint = profile.lockFingerprint;
     if (boundary.reset) {

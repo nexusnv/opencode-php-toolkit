@@ -38,4 +38,25 @@ describe("context parts", () => {
     expect(text).toContain("pending: php-security");
     expect(text).not.toContain("prompt");
   });
+
+  it("notes framework-specific limits without changing the routing labels", () => {
+    const text = renderToolkitStatePart({
+      profile: {
+        type: "application",
+        phpRequirement: "^8.2",
+        frameworkHints: ["laravel"],
+      } as never,
+      state: {
+        taskGeneration: 1,
+        activeIntents: ["Build"],
+        activeConcerns: [],
+        selectedSkills: ["php-testing"],
+        attachedSkills: ["php-testing"],
+        activatedSkills: new Set(),
+        unactivatedSkills: [],
+      } as never,
+    });
+    expect(text).toContain("Framework: laravel");
+    expect(text).toContain("framework-specific rules live in the sibling toolkit");
+  });
 });

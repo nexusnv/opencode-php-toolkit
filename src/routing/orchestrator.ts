@@ -77,6 +77,7 @@ export async function runRouting(
     agent: session?.agent ?? null,
     profile,
     state,
+    architectureMode: config.architectureMode,
   });
 
   // A non-PHP prompt must not advance the generation or inherit PHP concerns.
@@ -86,7 +87,7 @@ export async function runRouting(
       attach: [],
       profile,
       state,
-      reasons: ["php-context:absent"],
+      reasons: current.reasonCodes,
     };
   }
 
@@ -103,7 +104,7 @@ export async function runRouting(
     prompt: input.text,
     intents: withTask.activeIntents,
     concerns: withTask.activeConcerns,
-    maintainSubtype: current.maintainSubtype,
+    maintainSubtype: withTask.maintainSubtype,
     questionForm: current.questionForm,
     explicit: input.skills,
     activated: withTask.activatedSkills,

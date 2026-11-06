@@ -1,10 +1,11 @@
-import type { Concern, Intent, PreviousTask } from "./types.js";
+import type { Concern, Intent, MaintainSubtype, PreviousTask } from "./types.js";
 /** The subset of SessionRoutingState the boundary machine reads. */
 export interface TaskBoundaryState {
     taskGeneration: number;
     taskStartedAt: number;
     activeIntents: Intent[];
     activeConcerns: Concern[];
+    maintainSubtype: MaintainSubtype | null;
     previousTask: PreviousTask | null;
 }
 export interface TaskBoundaryInput {
@@ -12,6 +13,7 @@ export interface TaskBoundaryInput {
     current: {
         intents: Intent[];
         concerns: Concern[];
+        maintainSubtype: MaintainSubtype | null;
     };
     active: TaskBoundaryState | null;
     files: readonly string[];
@@ -24,6 +26,7 @@ export interface TaskBoundaryResult {
     taskStartedAt: number;
     intents: Intent[];
     concerns: Concern[];
+    maintainSubtype: MaintainSubtype | null;
     previousTask: PreviousTask | null;
     mode: "continuation" | "ambiguous-continuation" | "new-task" | "reset";
 }

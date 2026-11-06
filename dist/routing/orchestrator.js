@@ -31,6 +31,7 @@ export async function runRouting(ctx, input, config, profileCache, sessions, con
         agent: session?.agent ?? null,
         profile,
         state,
+        architectureMode: config.architectureMode,
     });
     // A non-PHP prompt must not advance the generation or inherit PHP concerns.
     if (!current.phpContext) {
@@ -39,7 +40,7 @@ export async function runRouting(ctx, input, config, profileCache, sessions, con
             attach: [],
             profile,
             state,
-            reasons: ["php-context:absent"],
+            reasons: current.reasonCodes,
         };
     }
     const boundary = transitionTask({
@@ -55,7 +56,7 @@ export async function runRouting(ctx, input, config, profileCache, sessions, con
         prompt: input.text,
         intents: withTask.activeIntents,
         concerns: withTask.activeConcerns,
-        maintainSubtype: current.maintainSubtype,
+        maintainSubtype: withTask.maintainSubtype,
         questionForm: current.questionForm,
         explicit: input.skills,
         activated: withTask.activatedSkills,

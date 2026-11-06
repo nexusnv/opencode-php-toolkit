@@ -12,7 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PHP-context prompts are classified into intents (Build, Design, Review,
   Debug, Test, Maintain) and concerns (Security, Testing, Debugging, Static
   analysis, Architecture, Design patterns, Coding standards, Dependencies);
-  up to three skills attach silently. No pattern skills ship in this phase.
+  up to three skills attach silently. A high-confidence Security concern may
+  use the fourth hard-ceiling slot, and Maintain subtypes survive continuations.
+  `architectureMode: "off"` disables classifier design gating. No pattern
+  skills ship in this phase.
 - Per-session project profiles with application/library confidence and
   root+subpath isolation.
 - L0 engineering constitution, replacing the static one-line typed-PHP hint.

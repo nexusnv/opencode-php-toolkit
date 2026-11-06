@@ -40,6 +40,30 @@ describe("session routing state", () => {
     expect(JSON.stringify(stored)).not.toContain("payment gateway");
   });
 
+  it("round-trips the active Maintain subtype", () => {
+    const state = createSessionState({
+      sessionID: "s1",
+      projectRoot: "/repo",
+      projectSubpath: null,
+    });
+    state.activeIntents = ["Maintain"];
+    state.maintainSubtype = "modernization";
+    const stored = serializeStorageState(state);
+    expect(stored.maintainSubtype).toBe("modernization");
+    expect(hydrateStorageState(stored)?.maintainSubtype).toBe("modernization");
+  });
+
+  it("hydrates older documents without a Maintain subtype", () => {
+    const state = createSessionState({
+      sessionID: "s1",
+      projectRoot: "/repo",
+      projectSubpath: null,
+    });
+    const stored = serializeStorageState(state);
+    delete (stored as { maintainSubtype?: unknown }).maintainSubtype;
+    expect(hydrateStorageState(stored)?.maintainSubtype).toBeNull();
+  });
+
   it("increments attempts and records permission status", () => {
     const state = createSessionState({
       sessionID: "s1",
@@ -91,6 +115,7 @@ describe("session routing state", () => {
         taskStartedAt: 100,
         intents: ["Build"],
         concerns: [],
+        maintainSubtype: null,
         previousTask: null,
         mode: "new-task",
       },
@@ -143,6 +168,30 @@ describe("session persistence", () => {
     expect(second).toBe(first);
     expect(moved).not.toBe(first);
     expect(moved.projectRoot).toBe("/other");
+  });
+
+  it("hydrates persisted state after a restart", async () => {
+    const state = createSessionState({
+      sessionID: "s1",
+      projectRoot: "/repo",
+      projectSubpath: null,
+    });
+    state.activeIntents = ["Maintain"];
+    state.maintainSubtype = "modernization";
+    const stored = serializeStorageState(state);
+    const sessions = new Map();
+    const storage = {
+      get: async () => stored,
+      set: async () => {},
+    };
+    const loaded = await loadOrCreateState(storage, sessions, {
+      sessionID: "s1",
+      projectRoot: "/repo",
+      projectSubpath: null,
+    });
+    expect(loaded).not.toBe(state);
+    expect(loaded.activeIntents).toEqual(["Maintain"]);
+    expect(loaded.maintainSubtype).toBe("modernization");
   });
 
   it("treats a storage read failure as a cache miss", async () => {

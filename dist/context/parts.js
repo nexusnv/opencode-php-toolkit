@@ -8,6 +8,9 @@ export function renderToolkitStatePart(context) {
     const framework = profile.frameworkHints.filter((hint) => hint !== "none");
     const php = profile.phpRequirement ? `PHP ${profile.phpRequirement}` : "PHP version unknown";
     lines.push(`Project: ${php} ${profile.type}; ${framework.length ? framework.join(" + ") : "no framework"}.`);
+    if (framework.length) {
+        lines.push(`Framework: ${framework.join(" + ")} — generic PHP routing; framework-specific rules live in the sibling toolkit.`);
+    }
     const mode = context.boundaryMode ? ` (${context.boundaryMode})` : "";
     lines.push(`Task: generation ${state.taskGeneration}${mode} | intents: ${state.activeIntents.join(", ") || "none"} | concerns: ${state.activeConcerns.join(", ") || "none"}`);
     const selected = state.selectedSkills.length ? state.selectedSkills.join(", ") : "none";

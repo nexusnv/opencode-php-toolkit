@@ -1,4 +1,4 @@
-import type { Concern, Intent, PreviousTask } from "./types.js";
+import type { Concern, Intent, MaintainSubtype, PreviousTask } from "./types.js";
 
 /** The subset of SessionRoutingState the boundary machine reads. */
 export interface TaskBoundaryState {
@@ -6,12 +6,17 @@ export interface TaskBoundaryState {
   taskStartedAt: number;
   activeIntents: Intent[];
   activeConcerns: Concern[];
+  maintainSubtype: MaintainSubtype | null;
   previousTask: PreviousTask | null;
 }
 
 export interface TaskBoundaryInput {
   prompt: string;
-  current: { intents: Intent[]; concerns: Concern[] };
+  current: {
+    intents: Intent[];
+    concerns: Concern[];
+    maintainSubtype: MaintainSubtype | null;
+  };
   active: TaskBoundaryState | null;
   files: readonly string[];
   agent: string | null;
@@ -24,6 +29,7 @@ export interface TaskBoundaryResult {
   taskStartedAt: number;
   intents: Intent[];
   concerns: Concern[];
+  maintainSubtype: MaintainSubtype | null;
   previousTask: PreviousTask | null;
   mode: "continuation" | "ambiguous-continuation" | "new-task" | "reset";
 }
@@ -54,6 +60,16 @@ function union<T>(a: readonly T[], b: readonly T[]): T[] {
   return [...new Set([...a, ...b])];
 }
 
+function effectiveMaintainSubtype(
+  current: MaintainSubtype | null,
+  intents: readonly Intent[],
+  active: MaintainSubtype | null,
+): MaintainSubtype | null {
+  if (current) return current;
+  if (intents.includes("Maintain")) return active ?? "refactor";
+  return null;
+}
+
 function newTask(
   input: TaskBoundaryInput,
   mode: "new-task" | "reset",
@@ -65,6 +81,7 @@ function newTask(
     taskStartedAt: input.now,
     intents: [...input.current.intents],
     concerns: [...input.current.concerns],
+    maintainSubtype: input.current.maintainSubtype,
     previousTask: previous,
     mode,
   };
@@ -93,12 +110,18 @@ export function transitionTask(input: TaskBoundaryInput): TaskBoundaryResult {
   // 3. Continuation marker with no new strong intent, or with an explicit
   // additional concern.
   if (continuationMarker && (!hasStrongIntent || ADDITIONAL_CONCERN.test(prompt))) {
+    const intents = union(active.activeIntents, current.intents);
     return {
       reset: false,
       taskGeneration: active.taskGeneration,
       taskStartedAt: active.taskStartedAt,
-      intents: union(active.activeIntents, current.intents),
+      intents,
       concerns: union(active.activeConcerns, current.concerns),
+      maintainSubtype: effectiveMaintainSubtype(
+        current.maintainSubtype,
+        intents,
+        active.maintainSubtype,
+      ),
       previousTask: null,
       mode: "continuation",
     };
@@ -106,12 +129,18 @@ export function transitionTask(input: TaskBoundaryInput): TaskBoundaryResult {
 
   // 4. Short prompt in the same scope with no new strong intent.
   if (shortPrompt && !hasStrongIntent && sameScope) {
+    const intents = union(active.activeIntents, current.intents);
     return {
       reset: false,
       taskGeneration: active.taskGeneration,
       taskStartedAt: active.taskStartedAt,
-      intents: union(active.activeIntents, current.intents),
+      intents,
       concerns: union(active.activeConcerns, current.concerns),
+      maintainSubtype: effectiveMaintainSubtype(
+        current.maintainSubtype,
+        intents,
+        active.maintainSubtype,
+      ),
       previousTask: null,
       mode: "continuation",
     };
@@ -130,6 +159,11 @@ export function transitionTask(input: TaskBoundaryInput): TaskBoundaryResult {
     taskStartedAt: active.taskStartedAt,
     intents: [...active.activeIntents],
     concerns: [...current.concerns],
+    maintainSubtype: effectiveMaintainSubtype(
+      current.maintainSubtype,
+      active.activeIntents,
+      active.maintainSubtype,
+    ),
     previousTask: null,
     mode: "ambiguous-continuation",
   };
