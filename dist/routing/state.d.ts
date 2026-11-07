@@ -19,8 +19,18 @@ export interface RoutingRenderContext {
     state: SessionRoutingState;
     boundaryMode?: "continuation" | "ambiguous-continuation" | "new-task" | "reset";
 }
-export declare function setRoutingRenderContext(sessionID: string, value: RoutingRenderContext): void;
-export declare function getRoutingRenderContext(sessionID: string): RoutingRenderContext | undefined;
-export declare function clearRoutingRenderContext(sessionID: string): void;
-/** Drops every render context held by this plugin process. */
-export declare function clearAllRoutingRenderContexts(): void;
+/**
+ * Render contexts belong to one plugin setup. A module-level map would leak
+ * state between plugin instances in the same process, so each setup owns an
+ * instance and disposes only its own entries.
+ */
+export declare class RoutingRenderContexts {
+    #private;
+    constructor(max?: number);
+    set(sessionID: string, value: RoutingRenderContext): void;
+    get(sessionID: string): RoutingRenderContext | undefined;
+    /** Points an existing context at a re-hydrated state object. */
+    syncState(sessionID: string, state: SessionRoutingState): void;
+    clear(sessionID: string): void;
+    clearAll(): void;
+}

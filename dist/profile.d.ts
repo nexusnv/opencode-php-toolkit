@@ -10,7 +10,7 @@ export interface ProjectProfile {
     phpRequirement: string | null;
     hasComposerJson: boolean;
     hasComposerLock: boolean;
-    autoloadPsr4: Record<string, string>;
+    autoloadPsr4: Record<string, string[]>;
     packageName: string | null;
     packageType: string | null;
     frameworkHints: FrameworkHint[];

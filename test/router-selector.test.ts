@@ -119,6 +119,107 @@ describe("selectSkills", () => {
     });
   });
 
+  it("does not let a denied skill consume the router budget", () => {
+    const result = selectSkills({
+      prompt: "security testing debugging",
+      intents: [],
+      concerns: ["Security", "Testing", "Debugging"],
+      maintainSubtype: null,
+      questionForm: false,
+      explicit: [],
+      activated: new Set(),
+      unactivated: [],
+      config: { maxSkills: 2, maxSkillChars: 12000 },
+      contentLengths,
+      denied: new Set(["php-security"]),
+    });
+    expect(result.selected).toEqual(["php-testing", "php-debug"]);
+    expect(result.dropped).toContainEqual({ id: "php-security", reason: "permission:denied" });
+  });
+
+  it("does not attach a skill the host cannot resolve", () => {
+    const result = selectSkills({
+      prompt: "security",
+      intents: [],
+      concerns: ["Security"],
+      maintainSubtype: null,
+      questionForm: false,
+      explicit: [],
+      activated: new Set(),
+      unactivated: [],
+      config: { maxSkills: 3, maxSkillChars: 12000 },
+      contentLengths,
+      available: new Set(["php-testing"]),
+      scores: { Security: 6 },
+    });
+    expect(result.selected).toEqual([]);
+    expect(result.dropped).toContainEqual({ id: "php-security", reason: "skill:unavailable" });
+    expect(result.reasonCodes).not.toContain("security:hard-ceiling");
+  });
+
+  it("does not add automatic skills beyond the hard skill ceiling", () => {
+    const explicit = [
+      { id: "php-standards" },
+      { id: "php-debug" },
+      { id: "php-composer" },
+      { id: "php-static-analysis" },
+    ];
+    const result = selectSkills({
+      prompt: "add an endpoint with security",
+      intents: ["Build"],
+      concerns: ["Security"],
+      maintainSubtype: null,
+      questionForm: false,
+      explicit,
+      activated: new Set(),
+      unactivated: [],
+      config: { maxSkills: 3, maxSkillChars: 12000 },
+      contentLengths,
+    });
+    expect(result.selected).toEqual(explicit.map((entry) => entry.id));
+    expect(result.attach).toEqual([]);
+    expect(result.dropped).toContainEqual({ id: "php-security", reason: "budget:max-skills" });
+  });
+
+  it("keeps automatic skills within the hard character ceiling", () => {
+    const lengths = new Map(contentLengths);
+    lengths.set("php-standards", 5300);
+    lengths.set("php-debug", 5300);
+    lengths.set("php-composer", 5300);
+    const result = selectSkills({
+      prompt: "new feature with tests",
+      intents: ["Build"],
+      concerns: [],
+      maintainSubtype: null,
+      questionForm: false,
+      explicit: [{ id: "php-standards" }, { id: "php-debug" }, { id: "php-composer" }],
+      activated: new Set(),
+      unactivated: [],
+      config: { maxSkills: 3, maxSkillChars: 12000 },
+      contentLengths: lengths,
+    });
+    expect(result.selected).toHaveLength(3);
+    expect(result.attach).toEqual([]);
+    expect(result.dropped).toContainEqual({ id: "php-testing", reason: "budget:max-chars" });
+  });
+
+  it("applies the question-form concern threshold in the fill pass", () => {
+    const result = selectSkills({
+      prompt: "What about testing?",
+      intents: [],
+      concerns: ["Testing"],
+      maintainSubtype: null,
+      questionForm: true,
+      explicit: [],
+      activated: new Set(),
+      unactivated: [],
+      config: { maxSkills: 3, maxSkillChars: 12000 },
+      contentLengths,
+      scores: { Testing: 1 },
+    });
+    expect(result.selected).toEqual([]);
+  });
+
   it("uses the fourth slot for a high-confidence security concern", () => {
     const result = selectSkills({
       prompt: "Upgrade to PHP 8.3, fix deprecations, add tests, and fix a security vulnerability.",

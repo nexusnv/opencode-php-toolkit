@@ -95,6 +95,9 @@ Attached is not loaded. `/php-toolkit-status` reports `selected`, `attached` and
 `activated` separately; only a `session.skill.activated` event proves a skill loaded.
 OpenCode still enforces skill permissions: a denied router skill is recorded but never
 attached, and an `ask` skill is attached once while the host owns approval.
+`/php-toolkit-status` is delivered through OpenCode's prompt hook, so on a
+remote-provider session the rendered status text — including the absolute project
+root — is sent to that provider.
 
 ```
 PHP toolkit status

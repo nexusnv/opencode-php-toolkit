@@ -17,7 +17,7 @@ export interface ProjectProfile {
   phpRequirement: string | null;
   hasComposerJson: boolean;
   hasComposerLock: boolean;
-  autoloadPsr4: Record<string, string>;
+  autoloadPsr4: Record<string, string[]>;
   packageName: string | null;
   packageType: string | null;
   frameworkHints: FrameworkHint[];
@@ -264,6 +264,20 @@ async function computeLayoutMarkerSignature(root: string): Promise<string> {
       parts.push(`${marker}:missing`);
     }
   }
+  // packageShape and releaseMetadata classify from the root listing itself:
+  // a new `docs` directory or `CHANGELOG.rst` changes the type even when no
+  // hashed file does.
+  try {
+    const entries = await readdir(root, { withFileTypes: true });
+    parts.push(
+      `root:${entries
+        .map((entry) => `${entry.name}:${entry.isDirectory() ? "d" : "f"}`)
+        .sort()
+        .join(",")}`,
+    );
+  } catch {
+    parts.push("root:missing");
+  }
   return parts.join("|");
 }
 
@@ -386,7 +400,7 @@ export async function buildProjectProfile(
     },
     configFiles,
     layout: {
-      sourceRoots: [...new Set(Object.values(psr4))],
+      sourceRoots: [...new Set(Object.values(psr4).flat())],
       testRoots,
       hasPublicIndex,
       hasConsoleBin,

@@ -72,4 +72,10 @@ describe("phase 1 routing corpus", () => {
       expect(new Set(selectForCorpus(c))).toEqual(new Set(c.expected));
     });
   }
+
+  it("keeps R20's shipped selection even though its pattern skill is deferred", () => {
+    const r20 = cases.find((c) => c.id === "R20");
+    expect(r20).toBeDefined();
+    expect(selectForCorpus(r20 as CorpusCase)).toContain("php-architecture");
+  });
 });

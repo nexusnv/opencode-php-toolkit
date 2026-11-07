@@ -10,8 +10,13 @@ export interface PermissionRule {
 export type EffectivePermission = "pending" | "awaiting-approval" | "denied";
 
 function globMatches(pattern: string, value: string): boolean {
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-  return new RegExp(`^${escaped}$`).test(value);
+  let source = "";
+  for (const char of pattern) {
+    if (char === "*") source += ".*";
+    else if (char === "?") source += ".";
+    else source += char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${source}$`).test(value);
 }
 
 /**
@@ -24,7 +29,7 @@ export function effectiveSkillPermission(
   skillID: string,
 ): EffectivePermission {
   const matches = rules.filter(
-    (rule) => rule.action === "skill" && globMatches(rule.resource, skillID),
+    (rule) => globMatches(rule.action, "skill") && globMatches(rule.resource, skillID),
   );
   if (matches.length === 0) return "pending";
   const effect = matches[matches.length - 1].effect;

@@ -33,6 +33,46 @@ describe("effectiveSkillPermission", () => {
       ),
     ).toBe("awaiting-approval");
   });
+
+  it("treats ? as a single-character wildcard", () => {
+    const rule = (resource: string) =>
+      effectiveSkillPermission([{ action: "skill", resource, effect: "deny" }], "php-testing");
+    expect(rule("php-testin?")).toBe("denied");
+    expect(rule("php-test?ng")).toBe("denied");
+    // ? matches exactly one character, not zero.
+    expect(rule("php-testing?")).toBe("pending");
+    expect(effectiveSkillPermission(
+      [{ action: "skill", resource: "?", effect: "deny" }],
+      "p",
+    )).toBe("denied");
+  });
+
+  it("keeps regex metacharacters literal in permission patterns", () => {
+    expect(
+      effectiveSkillPermission(
+        [{ action: "skill", resource: "php.testing", effect: "deny" }],
+        "phpXtesting",
+      ),
+    ).toBe("pending");
+    expect(
+      effectiveSkillPermission(
+        [{ action: "skill", resource: "php.testing", effect: "deny" }],
+        "php.testing",
+      ),
+    ).toBe("denied");
+  });
+
+  it("matches wildcard action patterns while preserving last-match order", () => {
+    expect(
+      effectiveSkillPermission(
+        [
+          { action: "*", resource: "php-*", effect: "allow" },
+          { action: "sk*", resource: "php-testing", effect: "deny" },
+        ],
+        "php-testing",
+      ),
+    ).toBe("denied");
+  });
 });
 
 describe("filterByPermission", () => {

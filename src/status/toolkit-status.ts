@@ -2,7 +2,7 @@ import type { Plugin } from "@opencode/plugin";
 import type { ToolkitConfig } from "../config.js";
 import type { ProjectProfile, ProjectProfileCache } from "../profile.js";
 import { cacheSessionState, loadPersistedSessionState } from "../routing/persistence.js";
-import { createSessionState } from "../routing/state.js";
+import { createSessionState, type RoutingRenderContexts } from "../routing/state.js";
 import type { SessionRoutingState } from "../routing/types.js";
 
 export interface ToolkitStatusInput {
@@ -50,6 +50,7 @@ function reasonsFor(state: SessionRoutingState): string[] {
     ...state.activeIntents.map((intent) => `intent:${slug(intent)}`),
     ...state.activeConcerns.map((concern) => `concern:${slug(concern)}`),
     ...state.droppedSkills.map((drop) => drop.reason),
+    ...state.unactivatedSkills.map((skill) => skill.reason),
   ];
   return [...new Set(reasons)];
 }
@@ -80,7 +81,15 @@ export function renderToolkitStatus(input: ToolkitStatusInput): string {
     const pending = state.unactivatedSkills
       .filter((skill) => skill.status === "pending")
       .map((skill) => skill.id);
+    const awaiting = state.unactivatedSkills
+      .filter((skill) => skill.status === "awaiting-approval")
+      .map((skill) => skill.id);
+    const denied = state.unactivatedSkills
+      .filter((skill) => skill.status === "denied")
+      .map((skill) => skill.id);
     lines.push(`  Pending: ${list(pending)}`);
+    if (awaiting.length) lines.push(`  Awaiting approval: ${list(awaiting)}`);
+    if (denied.length) lines.push(`  Denied: ${list(denied)}`);
     lines.push(
       `  Dropped: ${
         state.droppedSkills.length
@@ -104,6 +113,7 @@ export async function buildCurrentStatusSnapshot(
     sessionID: string;
     profileCache: ProjectProfileCache;
     sessions: Map<string, SessionRoutingState>;
+    renderContexts?: RoutingRenderContexts;
     config: ToolkitConfig;
   },
 ): Promise<string> {
@@ -130,6 +140,9 @@ export async function buildCurrentStatusSnapshot(
     const hydrated = await loadPersistedSessionState(ctx.storage, input.sessionID);
     if (hydrated && hydrated.projectRoot === root && hydrated.projectSubpath === subpath) {
       cacheSessionState(input.sessions, hydrated);
+      // Keep the context hook pointing at the same object the event handlers
+      // will mutate after a cache eviction or restart.
+      input.renderContexts?.syncState(input.sessionID, hydrated);
       state = hydrated;
     }
   }

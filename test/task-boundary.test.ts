@@ -4,6 +4,7 @@ import { transitionTask } from "../src/routing/task-boundary.js";
 const active = {
   taskGeneration: 2,
   taskStartedAt: Date.now() - 60_000,
+  activeFiles: [] as string[],
   activeIntents: ["Build" as const],
   activeConcerns: ["Security" as const],
   maintainSubtype: null,
@@ -105,6 +106,56 @@ describe("transitionTask", () => {
     expect(next.mode).toBe("ambiguous-continuation");
     expect(next.intents).toEqual(["Build"]);
     expect(next.concerns).toEqual(["Architecture"]);
+  });
+
+  it("lets a strong new intent win over an incidental pronoun", () => {
+    const next = transitionTask({
+      prompt: "Refactor this PHP class.",
+      current: { intents: ["Maintain"], concerns: [], maintainSubtype: "refactor" },
+      active: {
+        ...active,
+        activeIntents: ["Test"],
+        activeConcerns: [],
+      },
+      files: [],
+      agent: null,
+      now: Date.now(),
+    });
+    expect(next.mode).toBe("new-task");
+    expect(next.intents).toEqual(["Maintain"]);
+    expect(next.intents).not.toContain("Test");
+  });
+
+  it("starts a new task when a different file is attached to a short prompt", () => {
+    const next = transitionTask({
+      prompt: "Thoughts?",
+      current: { intents: [], concerns: [], maintainSubtype: null },
+      active: {
+        ...active,
+        activeFiles: ["src/First.php"],
+      },
+      files: ["src/Second.php"],
+      agent: null,
+      now: Date.now(),
+    });
+    expect(next.reset).toBe(true);
+    expect(next.mode).toBe("new-task");
+  });
+
+  it("keeps a short prompt on the same file as a continuation", () => {
+    const next = transitionTask({
+      prompt: "Thoughts?",
+      current: { intents: [], concerns: [], maintainSubtype: null },
+      active: {
+        ...active,
+        activeFiles: ["src/First.php"],
+      },
+      files: ["src/First.php"],
+      agent: null,
+      now: Date.now(),
+    });
+    expect(next.reset).toBe(false);
+    expect(next.mode).toBe("continuation");
   });
 
   it("recomputes the Maintain subtype for a new task", () => {

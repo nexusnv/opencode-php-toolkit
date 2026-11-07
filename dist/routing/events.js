@@ -13,14 +13,10 @@ export function applySkillActivatedEvent(state, event) {
 export function applyPermissionsEvent(state, rules) {
     for (const skill of state.unactivatedSkills) {
         const effective = effectiveSkillPermission(rules, skill.id);
-        if (effective === skill.status) {
-            // A permissions event is the only change signal available, so clear a
-            // stale two-attempt suppression for skills that remain allowed.
-            if (skill.status === "pending" && skill.reason === "activation:not-confirmed") {
-                skill.attempts = 0;
-            }
+        // Only a change that affects this skill resets its retry budget. An
+        // unrelated permissions event must not re-enable a suppressed skill.
+        if (effective === skill.status)
             continue;
-        }
         skill.status = effective;
         skill.reason = effective === "pending" ? "activation:not-confirmed" : `permission:${effective}`;
         if (effective === "pending")

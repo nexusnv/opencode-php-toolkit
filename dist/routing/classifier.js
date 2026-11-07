@@ -109,6 +109,7 @@ const MAINTAIN_GROUPS = {
     modernization: [
         "upgrade",
         "migrate",
+        "modernize",
         "deprecation",
         "rector",
         "php 8",
@@ -284,6 +285,7 @@ export function classify(input) {
     const frameworkContext = FRAMEWORK_TERMS.filter((term) => termToRegex(term).test(withoutExplicit));
     const fileSignals = matchFileSignals(files);
     const phpContext = hasPhpTerm(withoutExplicit) ||
+        fileSignals.php ||
         attachedPhpFile(files) ||
         (agent !== null && PHP_AGENTS.has(agent));
     if (!phpContext) {

@@ -1,6 +1,14 @@
 function globMatches(pattern, value) {
-    const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-    return new RegExp(`^${escaped}$`).test(value);
+    let source = "";
+    for (const char of pattern) {
+        if (char === "*")
+            source += ".*";
+        else if (char === "?")
+            source += ".";
+        else
+            source += char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+    return new RegExp(`^${source}$`).test(value);
 }
 /**
  * Interprets the session's effective skill permissions. The last matching
@@ -8,7 +16,7 @@ function globMatches(pattern, value) {
  * denial: it only means the host will decide at attachment time.
  */
 export function effectiveSkillPermission(rules, skillID) {
-    const matches = rules.filter((rule) => rule.action === "skill" && globMatches(rule.resource, skillID));
+    const matches = rules.filter((rule) => globMatches(rule.action, "skill") && globMatches(rule.resource, skillID));
     if (matches.length === 0)
         return "pending";
     const effect = matches[matches.length - 1].effect;

@@ -1,3 +1,4 @@
+import { MAX_UNACTIVATED_ATTEMPTS } from "./types.js";
 export function createSessionState(input) {
     const now = input.now ?? Date.now();
     return {
@@ -9,6 +10,7 @@ export function createSessionState(input) {
         taskGeneration: 0,
         taskStartedAt: now,
         previousTask: null,
+        activeFiles: [],
         activeIntents: [],
         activeConcerns: [],
         maintainSubtype: null,
@@ -34,7 +36,7 @@ export function markAttached(state, ids, status = "pending") {
             state.attachedSkills.push(id);
         const existing = state.unactivatedSkills.find((skill) => skill.id === id);
         if (existing) {
-            existing.attempts += 1;
+            existing.attempts = Math.min(existing.attempts + 1, MAX_UNACTIVATED_ATTEMPTS);
             existing.status = status;
             existing.reason = unactivatedReason(status);
         }
@@ -68,6 +70,7 @@ export function applyTaskBoundary(state, boundary, profile) {
     state.taskGeneration = boundary.taskGeneration;
     state.taskStartedAt = boundary.taskStartedAt;
     state.previousTask = boundary.previousTask;
+    state.activeFiles = [...boundary.activeFiles];
     state.activeIntents = [...boundary.intents];
     state.activeConcerns = [...boundary.concerns];
     state.maintainSubtype = boundary.maintainSubtype;
@@ -82,28 +85,44 @@ export function applyTaskBoundary(state, boundary, profile) {
     }
     return state;
 }
-const renderContexts = new Map();
 const MAX_ROUTING_CONTEXTS = 100;
-export function setRoutingRenderContext(sessionID, value) {
-    // Re-insert to move the entry to the end of the LRU, then evict the oldest.
-    if (renderContexts.has(sessionID))
-        renderContexts.delete(sessionID);
-    renderContexts.set(sessionID, value);
-    while (renderContexts.size > MAX_ROUTING_CONTEXTS) {
-        const oldest = renderContexts.keys().next().value;
-        if (oldest === undefined)
-            break;
-        renderContexts.delete(oldest);
+/**
+ * Render contexts belong to one plugin setup. A module-level map would leak
+ * state between plugin instances in the same process, so each setup owns an
+ * instance and disposes only its own entries.
+ */
+export class RoutingRenderContexts {
+    #items = new Map();
+    #max;
+    constructor(max = MAX_ROUTING_CONTEXTS) {
+        this.#max = max;
     }
-}
-export function getRoutingRenderContext(sessionID) {
-    return renderContexts.get(sessionID);
-}
-export function clearRoutingRenderContext(sessionID) {
-    renderContexts.delete(sessionID);
-}
-/** Drops every render context held by this plugin process. */
-export function clearAllRoutingRenderContexts() {
-    renderContexts.clear();
+    set(sessionID, value) {
+        // Re-insert to move the entry to the end of the LRU, then evict the oldest.
+        if (this.#items.has(sessionID))
+            this.#items.delete(sessionID);
+        this.#items.set(sessionID, value);
+        while (this.#items.size > this.#max) {
+            const oldest = this.#items.keys().next().value;
+            if (oldest === undefined)
+                break;
+            this.#items.delete(oldest);
+        }
+    }
+    get(sessionID) {
+        return this.#items.get(sessionID);
+    }
+    /** Points an existing context at a re-hydrated state object. */
+    syncState(sessionID, state) {
+        const current = this.#items.get(sessionID);
+        if (current)
+            this.#items.set(sessionID, { ...current, state });
+    }
+    clear(sessionID) {
+        this.#items.delete(sessionID);
+    }
+    clearAll() {
+        this.#items.clear();
+    }
 }
 //# sourceMappingURL=state.js.map

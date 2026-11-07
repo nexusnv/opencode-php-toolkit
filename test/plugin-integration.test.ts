@@ -45,7 +45,7 @@ function fakePluginContext(overrides: FakeOverrides = {}) {
   const contextHooks: Array<(event: any) => Promise<void> | void> = [];
   const compactionHooks: Array<(event: any) => Promise<void> | void> = [];
   const commands: Array<{ name: string; execute: (input: any) => Promise<void> }> = [];
-  const prompted: Array<{ sessionID: string; text: string }> = [];
+  const prompted: Array<{ sessionID: string; text: string; metadata?: Record<string, unknown> }> = [];
   const defaultRoot = resolve("fixtures/php-app");
   const storageEntries = new Map<string, unknown>(Object.entries(overrides.storageSeed ?? {}));
   const storage = {
@@ -90,8 +90,12 @@ function fakePluginContext(overrides: FakeOverrides = {}) {
         if (name === "compaction") compactionHooks.push(cb);
         return { dispose: async () => {} };
       },
-      prompt: async (input: { sessionID: string; text: string }) => {
-        prompted.push({ sessionID: input.sessionID, text: input.text });
+      prompt: async (input: {
+        sessionID: string;
+        text: string;
+        metadata?: Record<string, unknown>;
+      }) => {
+        prompted.push({ sessionID: input.sessionID, text: input.text, metadata: input.metadata });
       },
     },
     command: {
@@ -269,14 +273,26 @@ describe("plugin routing integration", () => {
 
     const status = fake.commands.find((command) => command.name === "php-toolkit-status");
     expect(status).toBeDefined();
+    const writesBefore = fake.storageEntries.size;
     await status!.execute({
       sessionID: "s1",
       prompt: { text: "" },
       delivery: {} as never,
     });
-    expect(fake.prompted.at(-1)?.text).toContain(
-      "Dropped: php-testing (permission:denied)",
-    );
+    const generated = fake.prompted.at(-1);
+    expect(generated?.text).toContain("Dropped: php-testing (permission:denied)");
+    expect(generated?.metadata).toEqual({ "php-toolkit-status": true });
+
+    // The status prompt is delivered through the prompt hook in real sessions.
+    // It must not be routed or persisted as a trigger.
+    const replay: FakePromptEvent = {
+      sessionID: "s1",
+      prompt: { text: generated!.text, files: [], skills: [] },
+      metadata: { ...generated!.metadata },
+    };
+    await fake.triggerPromptHook(replay);
+    expect(replay.prompt.skills).toEqual([]);
+    expect(fake.storageEntries.size).toBe(writesBefore);
     await cleanup();
   });
 

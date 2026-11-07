@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { removePhpToolkitParts, renderToolkitStatePart } from "../src/context/parts.js";
-import {
-  clearAllRoutingRenderContexts,
-  getRoutingRenderContext,
-  setRoutingRenderContext,
-} from "../src/routing/state.js";
+import { RoutingRenderContexts } from "../src/routing/state.js";
 
 describe("context parts", () => {
   it("removes prior php-toolkit system parts only", () => {
@@ -66,15 +62,16 @@ describe("context parts", () => {
   });
 
   it("evicts the stalest render context when the cache is full", () => {
+    const contexts = new RoutingRenderContexts();
     const id = (n: number) => `render-lru-${n}`;
     for (let n = 0; n < 101; n += 1) {
-      setRoutingRenderContext(id(n), {
+      contexts.set(id(n), {
         profile: { type: "application", frameworkHints: ["none"] } as never,
         state: { taskGeneration: n + 1, lastPromptAt: n } as never,
       });
     }
-    expect(getRoutingRenderContext(id(0))).toBeUndefined();
-    expect(getRoutingRenderContext(id(100))?.state.taskGeneration).toBe(101);
-    clearAllRoutingRenderContexts();
+    expect(contexts.get(id(0))).toBeUndefined();
+    expect(contexts.get(id(100))?.state.taskGeneration).toBe(101);
+    contexts.clearAll();
   });
 });

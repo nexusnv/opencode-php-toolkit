@@ -1,13 +1,28 @@
 import { createHash } from "node:crypto";
 export const METRICS_VERSION = 3;
+/** Counter dictionaries are prototype-free so arbitrary IDs are ordinary keys. */
+function counterRecord() {
+    return Object.create(null);
+}
+function ownValue(target, key) {
+    return Object.hasOwn(target, key) ? target[key] : undefined;
+}
+function setOwn(target, key, value) {
+    Object.defineProperty(target, key, {
+        value,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+    });
+}
 export function emptyRoutingMetrics() {
     return {
-        selections: {},
-        activations: {},
-        unactivated: {},
-        intents: {},
-        concerns: {},
-        dropped: {},
+        selections: counterRecord(),
+        activations: counterRecord(),
+        unactivated: counterRecord(),
+        intents: counterRecord(),
+        concerns: counterRecord(),
+        dropped: counterRecord(),
         taskGenerations: 0,
         continuations: 0,
         resets: 0,
@@ -125,10 +140,10 @@ function migrateCommands(raw) {
 }
 function migrateCounters(raw) {
     if (!raw || typeof raw !== "object")
-        return {};
-    const out = {};
+        return counterRecord();
+    const out = counterRecord();
     for (const [name, value] of Object.entries(raw)) {
-        out[name] = nonNegative(num(value));
+        setOwn(out, name, nonNegative(num(value)));
         if (Object.keys(out).length >= MAX_ENTRIES)
             break;
     }
@@ -136,16 +151,16 @@ function migrateCounters(raw) {
 }
 function migrateEntryCounters(raw) {
     if (!raw || typeof raw !== "object")
-        return {};
-    const out = {};
+        return counterRecord();
+    const out = counterRecord();
     for (const [name, value] of Object.entries(raw)) {
         if (!value || typeof value !== "object")
             continue;
         const entry = value;
-        out[name] = {
+        setOwn(out, name, {
             count: nonNegative(num(entry.count)),
             lastUsedAt: typeof entry.lastUsedAt === "string" ? entry.lastUsedAt : "",
-        };
+        });
         if (Object.keys(out).length >= MAX_ENTRIES)
             break;
     }
@@ -268,22 +283,30 @@ function later(a, b) {
     return a.lastUsedAt > b.lastUsedAt ? a : b;
 }
 function addCounters(a, b) {
-    const out = {};
+    const out = counterRecord();
     for (const [name, value] of Object.entries(a))
-        out[name] = value;
-    for (const [name, value] of Object.entries(b))
-        out[name] = (out[name] ?? 0) + value;
+        setOwn(out, name, value);
+    for (const [name, value] of Object.entries(b)) {
+        const current = ownValue(out, name);
+        if (current !== undefined)
+            setOwn(out, name, current + value);
+        else if (Object.keys(out).length < MAX_ENTRIES)
+            setOwn(out, name, value);
+    }
     return out;
 }
 function addEntryCounters(a, b) {
-    const out = {};
+    const out = counterRecord();
     for (const [name, value] of Object.entries(a))
-        out[name] = { ...value };
+        setOwn(out, name, { ...value });
     for (const [name, value] of Object.entries(b)) {
-        const current = out[name];
-        out[name] = current
-            ? { count: current.count + value.count, lastUsedAt: later(current, value).lastUsedAt }
-            : { ...value };
+        const current = ownValue(out, name);
+        if (current) {
+            setOwn(out, name, { count: current.count + value.count, lastUsedAt: later(current, value).lastUsedAt });
+        }
+        else if (Object.keys(out).length < MAX_ENTRIES) {
+            setOwn(out, name, { ...value });
+        }
     }
     return out;
 }
@@ -301,22 +324,23 @@ export function mergeRoutingMetrics(a, b) {
     };
 }
 function bumpCounter(target, key) {
-    if (target[key] !== undefined) {
-        target[key] += 1;
+    const current = ownValue(target, key);
+    if (current !== undefined) {
+        setOwn(target, key, current + 1);
         return;
     }
     if (Object.keys(target).length < MAX_ENTRIES)
-        target[key] = 1;
+        setOwn(target, key, 1);
 }
 function bumpEntryCounter(target, key, now) {
-    const existing = target[key];
+    const existing = ownValue(target, key);
     if (existing) {
-        existing.count += 1;
-        existing.lastUsedAt = now;
+        setOwn(target, key, { count: existing.count + 1, lastUsedAt: now });
         return;
     }
-    if (Object.keys(target).length < MAX_ENTRIES)
-        target[key] = { count: 1, lastUsedAt: now };
+    if (Object.keys(target).length < MAX_ENTRIES) {
+        setOwn(target, key, { count: 1, lastUsedAt: now });
+    }
 }
 /** Applies one routing event to a counter document. */
 export function applyRoutingEvent(target, event, now) {

@@ -43,6 +43,36 @@ describe("session routing state", () => {
     expect(JSON.stringify(stored)).not.toContain("payment gateway");
   });
 
+  it("round-trips the active task files and accepts older documents without them", () => {
+    const state = createSessionState({
+      sessionID: "s1",
+      projectRoot: "/repo",
+      projectSubpath: null,
+    });
+    state.activeFiles = ["src/Example.php"];
+    const stored = serializeStorageState(state);
+    expect(hydrateStorageState(stored)?.activeFiles).toEqual(["src/Example.php"]);
+
+    const legacy = { ...stored } as Record<string, unknown>;
+    delete legacy.activeFiles;
+    expect(hydrateStorageState(legacy)?.activeFiles).toEqual([]);
+  });
+
+  it("clamps live and persisted attempt counts to the hydration bound", () => {
+    const state = createSessionState({
+      sessionID: "s1",
+      projectRoot: "/repo",
+      projectSubpath: null,
+    });
+    for (let i = 0; i < 1_005; i += 1) markAttached(state, ["php-testing"]);
+    expect(state.unactivatedSkills[0].attempts).toBe(1_000);
+
+    state.unactivatedSkills[0].attempts = 5_000;
+    const stored = serializeStorageState(state);
+    expect(stored.unactivatedSkills[0].attempts).toBe(1_000);
+    expect(hydrateStorageState(stored)?.unactivatedSkills[0].attempts).toBe(1_000);
+  });
+
   it("round-trips the active Maintain subtype", () => {
     const state = createSessionState({
       sessionID: "s1",
@@ -116,6 +146,7 @@ describe("session routing state", () => {
         reset: true,
         taskGeneration: 1,
         taskStartedAt: 100,
+        activeFiles: [],
         intents: ["Build"],
         concerns: [],
         maintainSubtype: null,
@@ -168,9 +199,9 @@ describe("session persistence", () => {
       projectRoot: "/other",
       projectSubpath: null,
     });
-    expect(second).toBe(first);
-    expect(moved).not.toBe(first);
-    expect(moved.projectRoot).toBe("/other");
+    expect(second.state).toBe(first.state);
+    expect(moved.state).not.toBe(first.state);
+    expect(moved.state.projectRoot).toBe("/other");
   });
 
   it("rejects out-of-range or oversized documents", () => {
@@ -226,12 +257,13 @@ describe("session persistence", () => {
       projectRoot: "/repo",
       projectSubpath: null,
     });
-    expect(loaded).not.toBe(state);
-    expect(loaded.activeIntents).toEqual(["Maintain"]);
-    expect(loaded.maintainSubtype).toBe("modernization");
+    expect(loaded.state).not.toBe(state);
+    expect(loaded.readFailed).toBe(false);
+    expect(loaded.state.activeIntents).toEqual(["Maintain"]);
+    expect(loaded.state.maintainSubtype).toBe("modernization");
   });
 
-  it("treats a storage read failure as a cache miss", async () => {
+  it("treats a storage read failure as a cache miss without caching fresh state", async () => {
     const sessions = new Map();
     const storage = {
       get: async () => {
@@ -239,12 +271,15 @@ describe("session persistence", () => {
       },
       set: async () => {},
     };
-    const state = await loadOrCreateState(storage, sessions, {
+    const loaded = await loadOrCreateState(storage, sessions, {
       sessionID: "s1",
       projectRoot: "/repo",
       projectSubpath: null,
     });
-    expect(state.sessionID).toBe("s1");
+    expect(loaded.state.sessionID).toBe("s1");
+    expect(loaded.readFailed).toBe(true);
+    // A later successful read must still be able to recover saved history.
+    expect(sessions.size).toBe(0);
   });
 
   it("serializes writes for the same session", async () => {
@@ -287,6 +322,7 @@ describe("session persistence", () => {
       [`${SESSION_STORAGE_PREFIX}long`, serializeStorageState(old)],
     ]);
     const storage = {
+      get: vi.fn(async (key: string) => entries.get(key)),
       scan: vi.fn(async () => ({
         entries: [...entries.entries()].map(([key, value]) => ({ key, value })),
       })),
@@ -318,6 +354,7 @@ describe("session persistence", () => {
       [`${SESSION_STORAGE_PREFIX}corrupt`, { schemaVersion: 1 }],
     ]);
     const storage = {
+      get: vi.fn(async (key: string) => entries.get(key)),
       scan: vi.fn(async () => ({
         entries: [...entries.entries()].map(([key, value]) => ({ key, value })),
       })),
@@ -330,5 +367,42 @@ describe("session persistence", () => {
     expect(entries.has(`${SESSION_STORAGE_PREFIX}old`)).toBe(false);
     expect(entries.has(`${SESSION_STORAGE_PREFIX}fresh`)).toBe(true);
     expect(entries.has(`${SESSION_STORAGE_PREFIX}corrupt`)).toBe(true);
+  });
+
+  it("revalidates a scanned entry before deleting it", async () => {
+    const staleSnapshot = createSessionState({
+      sessionID: "refreshed",
+      projectRoot: "/repo",
+      projectSubpath: null,
+      now: 1_000,
+    });
+    const refreshed = createSessionState({
+      sessionID: "refreshed",
+      projectRoot: "/repo",
+      projectSubpath: null,
+      now: 2_000_000,
+    });
+    const entries = new Map<string, unknown>([
+      [`${SESSION_STORAGE_PREFIX}refreshed`, serializeStorageState(refreshed)],
+    ]);
+    const storage = {
+      // The scan sees the pre-prompt document; the prompt already refreshed it.
+      get: vi.fn(async (key: string) => entries.get(key)),
+      scan: vi.fn(async () => ({
+        entries: [
+          {
+            key: `${SESSION_STORAGE_PREFIX}refreshed`,
+            value: serializeStorageState(staleSnapshot),
+          },
+        ],
+      })),
+      remove: vi.fn(async (key: string) => {
+        entries.delete(key);
+      }),
+    };
+    const removed = await pruneStaleRoutingSessions(storage, 2_000_000, 1_000);
+    expect(removed).toBe(0);
+    expect(storage.remove).not.toHaveBeenCalled();
+    expect(entries.has(`${SESSION_STORAGE_PREFIX}refreshed`)).toBe(true);
   });
 });

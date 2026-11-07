@@ -9,4 +9,6 @@ export const CONCERNS = [
     "Static analysis",
     "Debugging",
 ];
+/** Persisted attempt counters must stay within the hydration bound. */
+export const MAX_UNACTIVATED_ATTEMPTS = 1_000;
 //# sourceMappingURL=types.js.map

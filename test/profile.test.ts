@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { buildProjectProfile, ProjectProfileCache } from "../src/profile.js";
 
 const fixture = (name: string) => resolve("fixtures", name);
@@ -60,5 +62,31 @@ describe("ProjectProfileCache", () => {
     const b = await cache.resolve(fixture("php-library-no-type"), null);
     expect(a.root).not.toBe(b.root);
     expect(cache.size).toBe(2);
+  });
+
+  it("invalidates when a root entry changes package shape", async () => {
+    const root = mkdtempSync(join(tmpdir(), "php-toolkit-profile-"));
+    try {
+      mkdirSync(join(root, "src"));
+      mkdirSync(join(root, "tests"));
+      writeFileSync(
+        join(root, "composer.json"),
+        JSON.stringify({ name: "acme/demo", autoload: { "psr-4": { "Acme\\": "src/" } } }),
+      );
+      const cache = new ProjectProfileCache();
+      const before = await cache.resolve(root, null);
+      expect(before.type).toBe("library");
+      expect(before.typeEvidence).toContain("layout:package-shape");
+
+      // `docs` is not one of the hashed config files; the root listing must
+      // still invalidate the cached classification.
+      mkdirSync(join(root, "docs"));
+      const after = await cache.resolve(root, null);
+      expect(after.type).toBe("unknown");
+      expect(after.typeEvidence).not.toContain("layout:package-shape");
+      expect(cache.size).toBe(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

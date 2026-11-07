@@ -9,7 +9,7 @@ import { PHP_TRIGGER, isDestructiveShell } from "./hooks/php-context.js";
 import { readToolkitConfig } from "./config.js";
 import { ProjectProfileCache } from "./profile.js";
 import { runRouting, runRoutingSafely } from "./routing/orchestrator.js";
-import { clearAllRoutingRenderContexts, getRoutingRenderContext } from "./routing/state.js";
+import { RoutingRenderContexts } from "./routing/state.js";
 import { cacheSessionState, loadPersistedSessionState, persistStorageState, pruneStaleRoutingSessions, } from "./routing/persistence.js";
 import { applyPermissionsEvent, applySkillActivatedEvent, } from "./routing/events.js";
 import { l0Part, removePhpToolkitParts, renderToolkitStatePart, statePart, } from "./context/parts.js";
@@ -36,7 +36,11 @@ export default Plugin.define({
         const config = readToolkitConfig(ctx.options);
         const profileCache = new ProjectProfileCache();
         const sessions = new Map();
+        const renderContexts = new RoutingRenderContexts();
         const contentLengths = new Map();
+        // Skills the host can resolve: bundled files that loaded, plus host skills
+        // registered under the same id. Routing must not attach the others.
+        const availableSkills = new Set();
         // Best-effort housekeeping for stale routing documents. A failure must
         // not prevent the plugin from starting.
         void pruneStaleRoutingSessions(ctx.storage).catch((err) => {
@@ -52,14 +56,29 @@ export default Plugin.define({
             }
             catch (err) {
                 console.warn(`[php-toolkit] could not resolve session for routing event: ${err.message}`);
-                return undefined;
+                // The event still belongs to this session. Reuse state that was
+                // already scope-validated rather than dropping the activation or
+                // permission change entirely.
+                const cached = sessions.get(sessionID);
+                if (cached) {
+                    renderContexts.syncState(sessionID, cached);
+                    return cached;
+                }
+                const hydrated = await loadPersistedSessionState(ctx.storage, sessionID);
+                if (hydrated) {
+                    cacheSessionState(sessions, hydrated);
+                    renderContexts.syncState(sessionID, hydrated);
+                }
+                return hydrated ?? undefined;
             }
             const root = session?.location?.directory ?? ctx.location.directory;
             const subpath = session?.subpath ?? null;
             const cached = sessions.get(sessionID);
             if (cached) {
-                if (cached.projectRoot === root && cached.projectSubpath === subpath)
+                if (cached.projectRoot === root && cached.projectSubpath === subpath) {
+                    renderContexts.syncState(sessionID, cached);
                     return cached;
+                }
                 // Stale scope for this session: drop it and re-hydrate from storage.
                 sessions.delete(sessionID);
             }
@@ -68,6 +87,7 @@ export default Plugin.define({
                 return undefined;
             }
             cacheSessionState(sessions, hydrated);
+            renderContexts.syncState(sessionID, hydrated);
             return hydrated;
         };
         /**
@@ -111,7 +131,10 @@ export default Plugin.define({
                 try {
                     const body = await loadText(`skills/${id}/SKILL.md`);
                     const { front, content } = parseFrontmatter(body);
-                    contentLengths.set(id, Buffer.byteLength(content, "utf8"));
+                    // maxSkillChars is a character budget; byte length would drop
+                    // content that fits the configured limit.
+                    contentLengths.set(id, [...content].length);
+                    availableSkills.add(id);
                     skills.push({
                         id,
                         name: front.name ?? skillTitle(id),
@@ -126,6 +149,10 @@ export default Plugin.define({
             }
             if (skills.length) {
                 track(await ctx.skill.transform((editor) => {
+                    for (const id of SKILL_IDS) {
+                        if (editor.get(id))
+                            availableSkills.add(id);
+                    }
                     for (const s of skills) {
                         if (!editor.get(s.id)) {
                             editor.add({ id: s.id, name: s.name, description: s.description, path: s.path, content: s.content, autoinvoke: true });
@@ -162,12 +189,15 @@ export default Plugin.define({
                                     sessionID,
                                     profileCache,
                                     sessions,
+                                    renderContexts,
                                     config,
                                 });
                                 await ctx.session.prompt({
                                     sessionID,
                                     text: c.template.replace("SNAPSHOT_PLACEHOLDER", snapshot),
                                     delivery,
+                                    // A diagnostic must not be routed or recorded as a trigger.
+                                    metadata: { "php-toolkit-status": true },
                                 });
                                 return;
                             }
@@ -358,14 +388,18 @@ export default Plugin.define({
         // ---- Hooks ----
         try {
             track(await ctx.session.hook("prompt", async (event) => {
+                if (event.metadata?.["php-toolkit-status"] === true)
+                    return;
                 const explicit = event.prompt.skills ?? [];
                 const result = await runRoutingSafely(() => runRouting(ctx, {
                     sessionID: event.sessionID,
                     text: event.prompt.text,
                     files: (event.prompt.files ?? []).map((file) => file.name ?? file.uri ?? ""),
                     skills: explicit,
-                }, config, profileCache, sessions, contentLengths, metrics), explicit);
+                }, config, profileCache, sessions, contentLengths, availableSkills, renderContexts, metrics), explicit);
                 if (result.error) {
+                    // Do not let a failed prompt render the previous task's state.
+                    renderContexts.clear(event.sessionID);
                     console.error(`[php-toolkit] routing failed: ${result.error}`);
                 }
                 // Router attachments are plain IDs; the host brand is only a type-level marker.
@@ -383,7 +417,7 @@ export default Plugin.define({
             track(await ctx.session.hook("context", (event) => {
                 event.system = removePhpToolkitParts(event.system);
                 event.system.push(l0Part());
-                const render = getRoutingRenderContext(event.sessionID);
+                const render = renderContexts.get(event.sessionID);
                 if (render && render.state.taskGeneration > 0) {
                     try {
                         event.system.push(statePart(renderToolkitStatePart(render)));
@@ -457,7 +491,7 @@ export default Plugin.define({
         return async () => {
             eventsAbort.abort();
             await metrics.flushAll();
-            clearAllRoutingRenderContexts();
+            renderContexts.clearAll();
             sessions.clear();
             for (const r of registrations.splice(0)) {
                 void r.dispose().catch(() => { });

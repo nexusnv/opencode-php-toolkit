@@ -4,7 +4,8 @@ export interface PhpProjectInfo {
     /** Set when composer.json exists but could not be read or parsed. */
     composerJsonError: string | null;
     phpRequirement: string | null;
-    autoloadPsr4: Record<string, string>;
+    /** PSR-4 prefixes may map to one or more directories. */
+    autoloadPsr4: Record<string, string[]>;
     require: Record<string, string>;
     requireDev: Record<string, string>;
     scripts: Record<string, string>;

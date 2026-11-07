@@ -35,7 +35,7 @@
   { "id": "R34", "prompt": "Add a factory for creating invoices.", "expected": ["php-design-patterns"], "enabledInPhase": 2, "reason": "pattern-library-not-shipped" },
   { "id": "R35", "prompt": "Refactor the switch statement into a state machine.", "expected": ["php-architecture", "php-pattern-state"], "enabledInPhase": 2, "reason": "pattern-library-not-shipped" },
   { "id": "R36", "prompt": "Add an adapter for the legacy payment API.", "expected": ["php-pattern-adapter"], "enabledInPhase": 2, "reason": "pattern-library-not-shipped" },
-  { "id": "R37", "prompt": "Modernize the legacy billing code.", "expected": ["php-modernize", "php-composer"], "enabledInPhase": 1 },
+  { "id": "R37", "prompt": "Modernize the billing code.", "expected": ["php-modernize", "php-composer"], "enabledInPhase": 1 },
   { "id": "R38", "prompt": "Add a singleton for the database connection.", "expected": ["php-design-patterns"], "enabledInPhase": 2, "reason": "pattern-library-not-shipped" },
   { "id": "R39", "prompt": "Refactor this 500-line controller.", "expected": ["php-architecture"], "enabledInPhase": 1 },
   { "id": "R40", "prompt": "Add a new feature flag service.", "expected": ["php-testing"], "enabledInPhase": 1 },

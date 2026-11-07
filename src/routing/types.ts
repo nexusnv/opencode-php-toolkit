@@ -18,6 +18,9 @@ export type Confidence = "high" | "medium" | "low";
 export type SkillUnactivatedStatus = "pending" | "awaiting-approval" | "denied";
 export type VerificationStatus = "passed" | "failed" | "partial" | "unavailable" | "error";
 
+/** Persisted attempt counters must stay within the hydration bound. */
+export const MAX_UNACTIVATED_ATTEMPTS = 1_000;
+
 export interface ClassificationResult {
   intents: Intent[];
   concerns: Concern[];
@@ -51,6 +54,8 @@ export interface SessionRoutingState {
   taskGeneration: number;
   taskStartedAt: number;
   previousTask: PreviousTask | null;
+  /** Files attached to the active task, used to detect scope changes. */
+  activeFiles: string[];
   activeIntents: Intent[];
   activeConcerns: Concern[];
   maintainSubtype: MaintainSubtype | null;

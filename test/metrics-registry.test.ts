@@ -71,6 +71,24 @@ describe("resolveProjectScope", () => {
       rmSync(linkParent, { recursive: true, force: true });
     }
   });
+
+  it("re-resolves a retargeted symlink instead of reusing a stale destination", () => {
+    const first = mkdtempSync(join(tmpdir(), "php-toolkit-first-"));
+    const second = mkdtempSync(join(tmpdir(), "php-toolkit-second-"));
+    const parent = mkdtempSync(join(tmpdir(), "php-toolkit-retarget-"));
+    const link = join(parent, "linked");
+    symlinkSync(first, link);
+    try {
+      expect(resolveProjectScope(link)).toBe(realpathSync(first));
+      rmSync(link);
+      symlinkSync(second, link);
+      expect(resolveProjectScope(link)).toBe(realpathSync(second));
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+      rmSync(first, { recursive: true, force: true });
+      rmSync(second, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("MetricsRegistry", () => {

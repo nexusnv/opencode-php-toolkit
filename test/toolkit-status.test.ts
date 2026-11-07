@@ -40,6 +40,43 @@ describe("renderToolkitStatus", () => {
     expect(text).toContain("Verify: unavailable (Phase 3)");
   });
 
+  it("reports awaiting and denied skills only when present", () => {
+    const config = {
+      autoSkills: "attach",
+      architectureMode: "risk",
+      architectureScan: "tool",
+      announceSelections: "off",
+    } as never;
+    const state = {
+      taskGeneration: 1,
+      activeIntents: ["Maintain"],
+      activeConcerns: [],
+      selectedSkills: ["php-modernize", "php-security"],
+      attachedSkills: ["php-modernize", "php-security"],
+      activatedSkills: new Set<string>(),
+      unactivatedSkills: [
+        { id: "php-security", status: "awaiting-approval", attempts: 0, reason: "permission:pending" },
+        { id: "php-modernize", status: "denied", attempts: 0, reason: "permission:denied" },
+      ],
+      droppedSkills: [],
+      lastPromptAt: 0,
+      verification: { lastRunAt: null, status: null, failedChecks: [] },
+    } as never;
+
+    const text = renderToolkitStatus({ profile: null, state, config });
+    expect(text).toContain("Awaiting approval: php-security");
+    expect(text).toContain("Denied: php-modernize");
+    expect(text).toContain("Reasons: intent:maintain, permission:pending, permission:denied");
+
+    const quiet = renderToolkitStatus({
+      profile: null,
+      state: { ...(state as object), unactivatedSkills: [] } as never,
+      config,
+    });
+    expect(quiet).not.toContain("Awaiting approval:");
+    expect(quiet).not.toContain("Denied:");
+  });
+
   it("does not invent a profile when the session has no location", () => {
     const text = renderToolkitStatus({
       profile: null,

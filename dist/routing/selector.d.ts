@@ -15,6 +15,10 @@ export interface SelectorInput {
         maxSkillChars: number;
     };
     contentLengths: ReadonlyMap<string, number>;
+    /** Skills the host can actually resolve; omitted means no availability filter. */
+    available?: ReadonlySet<string>;
+    /** Skills denied by the session's current permission snapshot. */
+    denied?: ReadonlySet<string>;
     scores?: Partial<Record<Target, number>>;
     agentDefault?: Intent | null;
 }

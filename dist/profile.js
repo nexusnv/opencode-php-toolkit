@@ -199,6 +199,19 @@ async function computeLayoutMarkerSignature(root) {
             parts.push(`${marker}:missing`);
         }
     }
+    // packageShape and releaseMetadata classify from the root listing itself:
+    // a new `docs` directory or `CHANGELOG.rst` changes the type even when no
+    // hashed file does.
+    try {
+        const entries = await readdir(root, { withFileTypes: true });
+        parts.push(`root:${entries
+            .map((entry) => `${entry.name}:${entry.isDirectory() ? "d" : "f"}`)
+            .sort()
+            .join(",")}`);
+    }
+    catch {
+        parts.push("root:missing");
+    }
     return parts.join("|");
 }
 export async function buildProjectProfile(root, subpath) {
@@ -309,7 +322,7 @@ export async function buildProjectProfile(root, subpath) {
         },
         configFiles,
         layout: {
-            sourceRoots: [...new Set(Object.values(psr4))],
+            sourceRoots: [...new Set(Object.values(psr4).flat())],
             testRoots,
             hasPublicIndex,
             hasConsoleBin,

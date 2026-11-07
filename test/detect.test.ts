@@ -65,6 +65,17 @@ describe("detectPhpProject", () => {
     expect(info.platformPhp).toBeNull();
   });
 
+  it("accepts array-valued PSR-4 mappings", async () => {
+    const dir = workspace({
+      "composer.json": manifest({
+        autoload: { "psr-4": { "Acme\\": ["src/", "lib/"] } },
+      }),
+    });
+    const info = await detectPhpProject(dir);
+    expect(info.autoloadPsr4).toEqual({ "Acme\\": ["src/", "lib/"] });
+    expect(formatDetection(info)).toContain("Acme\\=>src/, lib/");
+  });
+
   it("reports a malformed manifest as a finding instead of as an empty project", async () => {
     const dir = workspace({ "composer.json": "{ this is not json" });
     const info = await detectPhpProject(dir);

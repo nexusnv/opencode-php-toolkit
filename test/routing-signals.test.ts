@@ -39,21 +39,23 @@ describe("routing dictionary", () => {
     ]);
   });
 
-  it("contains mandatory high-weight signals", () => {
-    const terms = new Set([...INTENT_SIGNALS, ...CONCERN_SIGNALS].flatMap((s) => s.terms));
-    for (const term of [
-      "implement",
-      "architecture",
-      "security",
-      "phpunit",
-      "upgrade",
-      "sql injection",
-      "phpstan",
-      "xdebug",
-      "coding standard",
-    ]) {
-      expect(terms.has(term)).toBe(true);
-    }
+  it("keeps mandatory signals at their required target and weight", () => {
+    const signals = [...INTENT_SIGNALS, ...CONCERN_SIGNALS];
+    const pairsFor = (term: string) =>
+      signals
+        .filter((entry) => entry.terms.includes(term))
+        .map((entry) => `${entry.target}:${entry.weight}`)
+        .sort();
+    expect(pairsFor("implement")).toEqual(["Build:3"]);
+    // The same noun may legitimately score both an intent and a concern.
+    expect(pairsFor("architecture")).toEqual(["Architecture:3", "Design:3"]);
+    expect(pairsFor("security")).toEqual(["Security:3"]);
+    expect(pairsFor("phpunit")).toEqual(["Test:3", "Testing:3"]);
+    expect(pairsFor("upgrade")).toEqual(["Maintain:3"]);
+    expect(pairsFor("sql injection")).toEqual(["Security:3"]);
+    expect(pairsFor("phpstan")).toEqual(["Static analysis:3"]);
+    expect(pairsFor("xdebug")).toEqual(["Debugging:3"]);
+    expect(pairsFor("coding standard")).toEqual(["Coding standards:3"]);
   });
 
 });

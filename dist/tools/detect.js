@@ -80,7 +80,18 @@ export async function detectPhpProject(directory) {
         empty.require = composer.require ?? {};
         empty.requireDev = composer["require-dev"] ?? {};
         empty.phpRequirement = empty.require.php ?? null;
-        const psr4 = composer.autoload?.["psr-4"] ?? {};
+        const rawPsr4 = composer.autoload?.["psr-4"] ?? {};
+        const psr4 = {};
+        for (const [prefix, value] of Object.entries(rawPsr4)) {
+            if (typeof value === "string") {
+                psr4[prefix] = [value];
+            }
+            else if (Array.isArray(value)) {
+                const paths = value.filter((entry) => typeof entry === "string");
+                if (paths.length > 0)
+                    psr4[prefix] = paths;
+            }
+        }
         empty.autoloadPsr4 = psr4;
         const scripts = {};
         for (const [k, v] of Object.entries(composer.scripts ?? {})) {
@@ -128,7 +139,9 @@ export function formatDetection(info) {
     if (info.platformPhp)
         lines.push(`composer platform.php: ${info.platformPhp}`);
     const psr4 = Object.entries(info.autoloadPsr4);
-    lines.push(psr4.length ? `psr-4: ${psr4.map(([k, v]) => `${k}=>${v}`).join(", ")}` : "psr-4: not declared");
+    lines.push(psr4.length
+        ? `psr-4: ${psr4.map(([k, v]) => `${k}=>${v.join(", ")}`).join(", ")}`
+        : "psr-4: not declared");
     if (info.laravelHint)
         lines.push("note: Laravel detected — this core plugin stays agnostic; use opencode-laravel-toolkit for framework rules.");
     if (info.symfonyHint)

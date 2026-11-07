@@ -108,6 +108,36 @@ describe("formatMetricsSnapshot", () => {
     expect(out).toContain("5 issues surfaced by the toolkit in this project.");
   });
 
+  it("reports routing counters, top-three ordering and totals", () => {
+    const out = formatMetricsSnapshot(
+      metrics({
+        routing: {
+          selections: {
+            "php-testing": { count: 4, lastUsedAt: "" },
+            "php-security": { count: 2, lastUsedAt: "" },
+            "php-debug": { count: 2, lastUsedAt: "" },
+            "php-composer": { count: 1, lastUsedAt: "" },
+          },
+          activations: {
+            "php-testing": { count: 3, lastUsedAt: "" },
+            "php-security": { count: 2, lastUsedAt: "" },
+          },
+          unactivated: {},
+          intents: {},
+          concerns: {},
+          dropped: { "budget:max-skills": 2, "permission:denied": 1 },
+          taskGenerations: 7,
+          continuations: 4,
+          resets: 2,
+        },
+      }),
+    );
+    expect(out).toContain("generations 7   continuations 4   resets 2");
+    // Ties break by name: php-debug before php-security.
+    expect(out).toContain("most selected   php-testing (4), php-debug (2), php-security (2)");
+    expect(out).toContain("activations     5                 dropped 3");
+  });
+
   it("distinguishes a tool that could not run from one that found problems", () => {
     const out = formatMetricsSnapshot(
       metrics({

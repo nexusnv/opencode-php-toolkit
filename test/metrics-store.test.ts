@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   LEGACY_STORAGE_KEY,
   MetricsStore,
+  applyRoutingEvent,
   deserialize,
   emptyRoutingMetrics,
   mergeDelta,
+  mergeRoutingMetrics,
   projectKey,
   storageKeyFor,
   type MetricsDelta,
@@ -621,5 +623,77 @@ describe("mergeDelta", () => {
     const merged = mergeDelta(delta({ runs: 1, ok: 1, status: "ok" }), delta({ runs: 2, ok: 0, status: "error" }));
     expect(merged.tools.php_lint).toMatchObject({ runs: 3, ok: 1, error: 2, lastStatus: "error" });
     expect(merged.triggerHits).toBe(2);
+  });
+
+  it("keeps routing increments from both deltas", () => {
+    const first = {
+      tools: {},
+      commands: {},
+      triggerHits: 0,
+      routing: emptyRoutingMetrics(),
+    } satisfies MetricsDelta;
+    applyRoutingEvent(first.routing, { kind: "selected", skill: "php-testing" }, "2026-01-01T00:00:00.000Z");
+    applyRoutingEvent(first.routing, { kind: "task-generation" }, "2026-01-01T00:00:00.000Z");
+    first.routing.dropped["budget:max-skills"] = 1;
+
+    const second = {
+      tools: {},
+      commands: {},
+      triggerHits: 0,
+      routing: emptyRoutingMetrics(),
+    } satisfies MetricsDelta;
+    applyRoutingEvent(second.routing, { kind: "activated", skill: "php-testing" }, "2026-01-02T00:00:00.000Z");
+    applyRoutingEvent(second.routing, { kind: "task-generation" }, "2026-01-02T00:00:00.000Z");
+
+    const merged = mergeDelta(first, second);
+    expect(merged.routing.selections["php-testing"]).toMatchObject({ count: 1 });
+    expect(merged.routing.activations["php-testing"]).toMatchObject({ count: 1 });
+    expect(merged.routing.dropped["budget:max-skills"]).toBe(1);
+    expect(merged.routing.taskGenerations).toBe(2);
+  });
+});
+
+describe("routing counter keys", () => {
+  const now = "2026-01-01T00:00:00.000Z";
+
+  it("records inherited names as ordinary keys", () => {
+    const routing = emptyRoutingMetrics();
+    applyRoutingEvent(routing, { kind: "activated", skill: "__proto__" }, now);
+    applyRoutingEvent(routing, { kind: "unactivated", skill: "constructor" }, now);
+
+    expect(Object.hasOwn(routing.activations, "__proto__")).toBe(true);
+    expect(routing.activations["__proto__"].count).toBe(1);
+    expect(Object.hasOwn(routing.unactivated, "constructor")).toBe(true);
+    expect(({} as Record<string, unknown>).count).toBeUndefined();
+
+    const merged = mergeRoutingMetrics(routing, emptyRoutingMetrics());
+    expect(Object.hasOwn(merged.activations, "__proto__")).toBe(true);
+    expect(merged.activations["__proto__"].count).toBe(1);
+
+    const { metrics } = deserialize(
+      { version: 3, routing: JSON.parse(JSON.stringify(routing)) },
+      PROJECT,
+    );
+    expect(Object.hasOwn(metrics.routing.activations, "__proto__")).toBe(true);
+    expect(metrics.routing.activations["__proto__"].count).toBe(1);
+  });
+
+  it("keeps merges within the same counter limit as reloads", () => {
+    const base = emptyRoutingMetrics();
+    for (let i = 0; i < 200; i += 1) {
+      applyRoutingEvent(base, { kind: "activated", skill: `skill-${i}` }, now);
+    }
+    const delta = emptyRoutingMetrics();
+    applyRoutingEvent(delta, { kind: "activated", skill: "skill-0" }, now);
+    applyRoutingEvent(delta, { kind: "activated", skill: "overflow" }, now);
+
+    const merged = mergeRoutingMetrics(base, delta);
+    expect(Object.keys(merged.activations)).toHaveLength(200);
+    expect(merged.activations["skill-0"].count).toBe(2);
+    expect(Object.hasOwn(merged.activations, "overflow")).toBe(false);
+
+    const { metrics } = deserialize({ version: 3, routing: merged }, PROJECT);
+    expect(Object.keys(metrics.routing.activations)).toHaveLength(200);
+    expect(metrics.routing.activations["skill-0"].count).toBe(2);
   });
 });

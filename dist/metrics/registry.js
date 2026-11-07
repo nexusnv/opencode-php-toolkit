@@ -1,26 +1,18 @@
 import { realpathSync } from "node:fs";
 import { basename, resolve, sep } from "node:path";
 import { MetricsStore, } from "./store.js";
-const realpathCache = new Map();
-const MAX_REALPATH_CACHE = 256;
+/**
+ * Resolves symlinks eagerly. Cached canonical paths would go stale when a
+ * symlink is retargeted, so every call revalidates the current destination.
+ */
 function tryRealpath(path) {
-    const cached = realpathCache.get(path);
-    if (cached !== undefined)
-        return cached;
-    let resolved;
     try {
-        resolved = realpathSync(path);
+        return realpathSync(path);
     }
     catch {
-        // Missing paths compare textually; don't cache them so a path that
-        // appears later resolves correctly.
+        // Missing paths compare textually.
         return path;
     }
-    if (realpathCache.size >= MAX_REALPATH_CACHE) {
-        realpathCache.delete(realpathCache.keys().next().value);
-    }
-    realpathCache.set(path, resolved);
-    return resolved;
 }
 /**
  * Resolves the project a piece of work belongs to.

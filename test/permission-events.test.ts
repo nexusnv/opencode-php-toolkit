@@ -29,6 +29,25 @@ describe("routing events", () => {
       { action: "skill", resource: "php-security", effect: "allow" },
     ]);
     expect(state.unactivatedSkills[0].status).toBe("pending");
+    expect(state.unactivatedSkills[0].attempts).toBe(0);
+  });
+
+  it("preserves the retry budget when an unrelated permission changes", () => {
+    const state = baseState("s1");
+    state.unactivatedSkills.push({
+      id: "php-testing",
+      attempts: 2,
+      status: "pending",
+      reason: "activation:not-confirmed",
+    });
+    applyPermissionsEvent(state, [
+      { action: "skill", resource: "php-security", effect: "deny" },
+    ]);
+    expect(state.unactivatedSkills[0]).toMatchObject({
+      status: "pending",
+      attempts: 2,
+      reason: "activation:not-confirmed",
+    });
   });
 
   it("does not infer denial from missing activation", () => {

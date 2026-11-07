@@ -47,6 +47,7 @@ function reasonsFor(state) {
         ...state.activeIntents.map((intent) => `intent:${slug(intent)}`),
         ...state.activeConcerns.map((concern) => `concern:${slug(concern)}`),
         ...state.droppedSkills.map((drop) => drop.reason),
+        ...state.unactivatedSkills.map((skill) => skill.reason),
     ];
     return [...new Set(reasons)];
 }
@@ -72,7 +73,17 @@ export function renderToolkitStatus(input) {
         const pending = state.unactivatedSkills
             .filter((skill) => skill.status === "pending")
             .map((skill) => skill.id);
+        const awaiting = state.unactivatedSkills
+            .filter((skill) => skill.status === "awaiting-approval")
+            .map((skill) => skill.id);
+        const denied = state.unactivatedSkills
+            .filter((skill) => skill.status === "denied")
+            .map((skill) => skill.id);
         lines.push(`  Pending: ${list(pending)}`);
+        if (awaiting.length)
+            lines.push(`  Awaiting approval: ${list(awaiting)}`);
+        if (denied.length)
+            lines.push(`  Denied: ${list(denied)}`);
         lines.push(`  Dropped: ${state.droppedSkills.length
             ? state.droppedSkills.map((drop) => `${drop.id} (${drop.reason})`).join(", ")
             : "none"}`);
@@ -103,6 +114,9 @@ export async function buildCurrentStatusSnapshot(ctx, input) {
         const hydrated = await loadPersistedSessionState(ctx.storage, input.sessionID);
         if (hydrated && hydrated.projectRoot === root && hydrated.projectSubpath === subpath) {
             cacheSessionState(input.sessions, hydrated);
+            // Keep the context hook pointing at the same object the event handlers
+            // will mutate after a cache eviction or restart.
+            input.renderContexts?.syncState(input.sessionID, hydrated);
             state = hydrated;
         }
     }

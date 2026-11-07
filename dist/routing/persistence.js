@@ -1,4 +1,4 @@
-import { CONCERNS, INTENTS } from "./types.js";
+import { CONCERNS, INTENTS, MAX_UNACTIVATED_ATTEMPTS } from "./types.js";
 import { createSessionState } from "./state.js";
 export const SESSION_STORAGE_PREFIX = "php-toolkit:session:";
 export const SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -87,7 +87,7 @@ function parseUnactivatedSkills(value) {
         if (!isRecord(entry))
             return null;
         if (!isStringAtMost(entry.id, MAX_ID_LENGTH) ||
-            !isNonNegativeInteger(entry.attempts, 1_000) ||
+            !isNonNegativeInteger(entry.attempts, MAX_UNACTIVATED_ATTEMPTS) ||
             !isStringAtMost(entry.reason, MAX_REASON_LENGTH) ||
             !isStringAtMost(entry.status, 32) ||
             !UNACTIVATED_STATUSES.includes(entry.status)) {
@@ -153,13 +153,17 @@ export function serializeStorageState(state) {
                 concerns: [...state.previousTask.concerns],
             }
             : null,
+        activeFiles: [...state.activeFiles],
         activeIntents: [...state.activeIntents],
         activeConcerns: [...state.activeConcerns],
         maintainSubtype: state.maintainSubtype,
         selectedSkills: [...state.selectedSkills],
         attachedSkills: [...state.attachedSkills],
         activatedSkills: [...state.activatedSkills],
-        unactivatedSkills: state.unactivatedSkills.map((skill) => ({ ...skill })),
+        unactivatedSkills: state.unactivatedSkills.map((skill) => ({
+            ...skill,
+            attempts: Math.min(skill.attempts, MAX_UNACTIVATED_ATTEMPTS),
+        })),
         droppedSkills: state.droppedSkills.map((skill) => ({ ...skill })),
         mode: state.mode,
         lastPromptAt: state.lastPromptAt,
@@ -205,6 +209,14 @@ export function hydrateStorageState(raw) {
         !isIDArray(raw.activatedSkills)) {
         return null;
     }
+    // Older documents predate active-file tracking; an absent value means "none".
+    const activeFiles = raw.activeFiles === undefined
+        ? []
+        : isStringArray(raw.activeFiles, MAX_PATH_LENGTH, MAX_ARRAY_ITEMS)
+            ? [...raw.activeFiles]
+            : null;
+    if (!activeFiles)
+        return null;
     const unactivatedSkills = parseUnactivatedSkills(raw.unactivatedSkills);
     const droppedSkills = parseDroppedSkills(raw.droppedSkills);
     const verification = parseVerification(raw.verification);
@@ -219,6 +231,7 @@ export function hydrateStorageState(raw) {
         taskGeneration: raw.taskGeneration,
         taskStartedAt: raw.taskStartedAt,
         previousTask: previousTask.value,
+        activeFiles,
         activeIntents: [...raw.activeIntents],
         activeConcerns: [...raw.activeConcerns],
         maintainSubtype: maintainSubtype.value,
@@ -254,34 +267,43 @@ export function cacheSessionState(sessions, state) {
     evictOldestSession(sessions);
 }
 /** Reads persisted routing state without creating a fallback entry. */
-export async function loadPersistedSessionState(storage, sessionID) {
+export async function readPersistedSessionState(storage, sessionID) {
     try {
         const raw = await storage.get(`${SESSION_STORAGE_PREFIX}${sessionID}`);
         const hydrated = hydrateStorageState(raw);
-        return hydrated && hydrated.sessionID === sessionID ? hydrated : null;
+        return {
+            state: hydrated && hydrated.sessionID === sessionID ? hydrated : null,
+            readFailed: false,
+        };
     }
     catch (err) {
         console.warn(`[php-toolkit] session state read failed: ${err.message}`);
-        return null;
+        return { state: null, readFailed: true };
     }
+}
+export async function loadPersistedSessionState(storage, sessionID) {
+    return (await readPersistedSessionState(storage, sessionID)).state;
 }
 export async function loadOrCreateState(storage, sessions, input) {
     const cached = sessions.get(input.sessionID);
     if (cached &&
         cached.projectRoot === input.projectRoot &&
         cached.projectSubpath === input.projectSubpath) {
-        return cached;
+        return { state: cached, readFailed: false };
     }
-    const hydrated = await loadPersistedSessionState(storage, input.sessionID);
-    if (hydrated &&
-        hydrated.projectRoot === input.projectRoot &&
-        hydrated.projectSubpath === input.projectSubpath) {
-        cacheSessionState(sessions, hydrated);
-        return hydrated;
+    const read = await readPersistedSessionState(storage, input.sessionID);
+    if (read.state &&
+        read.state.projectRoot === input.projectRoot &&
+        read.state.projectSubpath === input.projectSubpath) {
+        cacheSessionState(sessions, read.state);
+        return { state: read.state, readFailed: false };
     }
     const created = createSessionState(input);
-    cacheSessionState(sessions, created);
-    return created;
+    // A failed read may be transient; caching or persisting fresh state would
+    // replace history that a later successful read could still recover.
+    if (!read.readFailed)
+        cacheSessionState(sessions, created);
+    return { state: created, readFailed: read.readFailed };
 }
 /** Removes persisted session documents with no prompt activity for the retention window. */
 export async function pruneStaleRoutingSessions(storage, now = Date.now(), retentionMs = SESSION_RETENTION_MS) {
@@ -302,6 +324,23 @@ export async function pruneStaleRoutingSessions(storage, now = Date.now(), reten
             // a long-running task with fresh prompts must not be pruned.
             const touched = hydrated.lastPromptAt > 0 ? hydrated.lastPromptAt : hydrated.taskStartedAt;
             if (touched >= cutoff)
+                continue;
+            // Revalidate immediately before deleting: a prompt may have refreshed
+            // the document after the scan page was read. A failed re-read must not
+            // delete state that could still be current.
+            let current;
+            try {
+                current = await storage.get(entry.key);
+            }
+            catch (err) {
+                console.warn(`[php-toolkit] could not re-read session state: ${err.message}`);
+                continue;
+            }
+            const latest = hydrateStorageState(current);
+            if (!latest)
+                continue;
+            const latestTouched = latest.lastPromptAt > 0 ? latest.lastPromptAt : latest.taskStartedAt;
+            if (latestTouched >= cutoff)
                 continue;
             try {
                 await storage.remove(entry.key);

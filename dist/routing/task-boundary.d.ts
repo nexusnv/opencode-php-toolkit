@@ -3,6 +3,7 @@ import type { Concern, Intent, MaintainSubtype, PreviousTask } from "./types.js"
 export interface TaskBoundaryState {
     taskGeneration: number;
     taskStartedAt: number;
+    activeFiles: string[];
     activeIntents: Intent[];
     activeConcerns: Concern[];
     maintainSubtype: MaintainSubtype | null;
@@ -24,6 +25,7 @@ export interface TaskBoundaryResult {
     reset: boolean;
     taskGeneration: number;
     taskStartedAt: number;
+    activeFiles: string[];
     intents: Intent[];
     concerns: Concern[];
     maintainSubtype: MaintainSubtype | null;

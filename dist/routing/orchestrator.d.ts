@@ -2,6 +2,7 @@ import type { Plugin } from "@opencode/plugin";
 import type { ToolkitConfig } from "../config.js";
 import type { MetricsRegistry } from "../metrics/registry.js";
 import type { ProjectProfile, ProjectProfileCache } from "../profile.js";
+import { type RoutingRenderContexts } from "./state.js";
 import type { SessionRoutingState } from "./types.js";
 export interface RoutePromptInput {
     sessionID: string;
@@ -33,4 +34,4 @@ export interface SafeRoutingResult {
     error?: string;
 }
 export declare function runRoutingSafely(run: () => Promise<RoutePromptResult>, explicit?: RoutePromptInput["skills"]): Promise<SafeRoutingResult>;
-export declare function runRouting(ctx: Plugin.Context, input: RoutePromptInput, config: ToolkitConfig, profileCache: ProjectProfileCache, sessions: Map<string, SessionRoutingState>, contentLengths: ReadonlyMap<string, number>, metrics: MetricsRegistry): Promise<RoutePromptResult>;
+export declare function runRouting(ctx: Plugin.Context, input: RoutePromptInput, config: ToolkitConfig, profileCache: ProjectProfileCache, sessions: Map<string, SessionRoutingState>, contentLengths: ReadonlyMap<string, number>, availableSkills: ReadonlySet<string>, renderContexts: RoutingRenderContexts, metrics: MetricsRegistry): Promise<RoutePromptResult>;

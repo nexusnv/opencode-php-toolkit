@@ -92,6 +92,22 @@ describe("classify", () => {
     }
   });
 
+  it("classifies modernize as modernization without requiring legacy wording", () => {
+    const result = classify({ prompt: "Modernize the billing code.", ...base });
+    expect(result.intents).toContain("Maintain");
+    expect(result.maintainSubtype).toBe("modernization");
+  });
+
+  it("uses a normalized Windows composer.json attachment as PHP context", () => {
+    const result = classify({
+      prompt: "Review this change.",
+      ...base,
+      files: ["C:\\project\\composer.json"],
+    });
+    expect(result.phpContext).toBe(true);
+    expect(result.intents).toContain("Review");
+  });
+
   it("notes framework context without treating it as PHP context", () => {
     const frameworkOnly = classify({
       prompt: "Add a Laravel controller.",

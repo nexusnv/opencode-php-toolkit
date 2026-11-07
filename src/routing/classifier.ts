@@ -151,6 +151,7 @@ const MAINTAIN_GROUPS: Record<MaintainSubtype, readonly string[]> = {
   modernization: [
     "upgrade",
     "migrate",
+    "modernize",
     "deprecation",
     "rector",
     "php 8",
@@ -359,6 +360,7 @@ export function classify(input: ClassifierInput): ClassificationResult {
   const fileSignals = matchFileSignals(files);
   const phpContext =
     hasPhpTerm(withoutExplicit) ||
+    fileSignals.php ||
     attachedPhpFile(files) ||
     (agent !== null && PHP_AGENTS.has(agent));
 

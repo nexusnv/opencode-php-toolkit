@@ -37,7 +37,7 @@ function contentLength(contentLengths, id) {
  * concern priority, then the remaining budget.
  */
 export function selectSkills(input) {
-    const { prompt, intents, concerns, maintainSubtype, questionForm, explicit, activated, unactivated, config, contentLengths, scores, agentDefault, } = input;
+    const { prompt, intents, concerns, maintainSubtype, questionForm, explicit, activated, unactivated, config, contentLengths, available, denied, scores, agentDefault, } = input;
     const normalized = stripCodeFences(normalizePrompt(prompt)).replace(/@[a-z0-9-]+/g, " ");
     const featureScale = matchesAny(normalized, FEATURE_SCALE_TERMS);
     const broadReview = matchesAny(normalized, BROAD_REVIEW_TERMS);
@@ -87,6 +87,16 @@ export function selectSkills(input) {
             return;
         if (activated.has(id))
             return;
+        // Denied and unavailable skills must not consume the router budget: a
+        // later permitted candidate should get the slot instead.
+        if (denied?.has(id)) {
+            drop(id, "permission:denied");
+            return;
+        }
+        if (available && !available.has(id)) {
+            drop(id, "skill:unavailable");
+            return;
+        }
         const previous = unactivatedByID.get(id);
         if (previous?.status === "denied") {
             drop(id, "permission:denied");
@@ -100,11 +110,21 @@ export function selectSkills(input) {
             drop(id, "activation:not-confirmed");
             return;
         }
-        if (routerSkillCount >= routerSkillCap) {
+        // The hard ceiling applies to the whole selection, including explicit
+        // skills, which bypass only the soft router budget.
+        if (selected.length >= hardSkillCap) {
             drop(id, "budget:max-skills");
             return;
         }
         const length = contentLength(contentLengths, id);
+        if (totalChars + length > hardCharCap) {
+            drop(id, "budget:max-chars");
+            return;
+        }
+        if (routerSkillCount >= routerSkillCap) {
+            drop(id, "budget:max-skills");
+            return;
+        }
         if (routerChars + length > routerCharCap) {
             drop(id, "budget:max-chars");
             return;
@@ -199,6 +219,8 @@ export function selectSkills(input) {
     const securityScore = scores?.["Security"] ?? 0;
     const securityPrevious = unactivatedByID.get("php-security");
     const securitySuppressed = activated.has("php-security") ||
+        denied?.has("php-security") === true ||
+        (available !== undefined && !available.has("php-security")) ||
         securityPrevious?.status === "denied" ||
         securityPrevious?.status === "awaiting-approval" ||
         (securityPrevious?.status === "pending" && securityPrevious.attempts >= 2);
@@ -264,6 +286,7 @@ export function selectSkills(input) {
     const targetsInScope = new Set([...concerns, ...effectiveIntents]);
     const fillCandidates = [...CONCERN_SKILL_BY_TARGET.values()]
         .filter((entry) => targetsInScope.has(entry.target))
+        .filter((entry) => !questionForm || concernActive(entry.target))
         .filter((entry) => !selectedSet.has(entry.id))
         .sort((a, b) => {
         const byScore = (scores?.[b.target] ?? 2) - (scores?.[a.target] ?? 2);

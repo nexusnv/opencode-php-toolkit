@@ -6,15 +6,29 @@ export declare function serializeStorageState(state: SessionRoutingState): Store
 export declare function hydrateStorageState(raw: unknown): SessionRoutingState | null;
 /** Caches a state and evicts the stalest in-memory entry when full. */
 export declare function cacheSessionState(sessions: Map<string, SessionRoutingState>, state: SessionRoutingState): void;
+/** Outcome of a persisted-state read: a missing doc and an I/O failure differ. */
+export interface PersistedSessionRead {
+    state: SessionRoutingState | null;
+    readFailed: boolean;
+}
 /** Reads persisted routing state without creating a fallback entry. */
+export declare function readPersistedSessionState(storage: {
+    get(key: string): Promise<unknown>;
+}, sessionID: string): Promise<PersistedSessionRead>;
 export declare function loadPersistedSessionState(storage: {
     get(key: string): Promise<unknown>;
 }, sessionID: string): Promise<SessionRoutingState | null>;
+export interface LoadedSessionState {
+    state: SessionRoutingState;
+    /** True when persisted history could not be read and must not be overwritten. */
+    readFailed: boolean;
+}
 export declare function loadOrCreateState(storage: {
     get(key: string): Promise<unknown>;
     set(key: string, value: unknown): Promise<void>;
-}, sessions: Map<string, SessionRoutingState>, input: CreateSessionStateInput): Promise<SessionRoutingState>;
+}, sessions: Map<string, SessionRoutingState>, input: CreateSessionStateInput): Promise<LoadedSessionState>;
 export interface SessionPruneStorage {
+    get(key: string): Promise<unknown>;
     scan(options: {
         prefix: string;
         after?: string;

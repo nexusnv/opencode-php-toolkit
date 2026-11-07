@@ -316,7 +316,7 @@ npm ci
 npm run typecheck
 npm test
 npm run build
-git diff --exit-code -- dist
+git add -A -- dist && git diff --cached --exit-code -- dist
 node -e "import('./dist/index.js').then(m => { if (m.default.id !== 'php-toolkit') process.exit(1) })"
 npm pack --dry-run
 ```
@@ -354,7 +354,7 @@ Also required:
 
 ### Evaluation corpus
 
-- `test/routing-corpus.json` is the minimum contract.
+- `test/fixtures/routing-corpus.json` is the minimum contract.
 - Phase 1 runs cases whose expected skills exist; pattern-dependent cases remain gated until Phase 2.
 - Phase 2 unlocks the full corpus and requires exact selected-skill sets.
 - Every rule or signal change must add or update a case.

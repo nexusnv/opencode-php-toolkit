@@ -9,25 +9,17 @@ import {
 
 export type { RoutingMetricEvent } from "./store.js";
 
-const realpathCache = new Map<string, string>();
-const MAX_REALPATH_CACHE = 256;
-
+/**
+ * Resolves symlinks eagerly. Cached canonical paths would go stale when a
+ * symlink is retargeted, so every call revalidates the current destination.
+ */
 function tryRealpath(path: string): string {
-  const cached = realpathCache.get(path);
-  if (cached !== undefined) return cached;
-  let resolved: string;
   try {
-    resolved = realpathSync(path);
+    return realpathSync(path);
   } catch {
-    // Missing paths compare textually; don't cache them so a path that
-    // appears later resolves correctly.
+    // Missing paths compare textually.
     return path;
   }
-  if (realpathCache.size >= MAX_REALPATH_CACHE) {
-    realpathCache.delete(realpathCache.keys().next().value as string);
-  }
-  realpathCache.set(path, resolved);
-  return resolved;
 }
 
 /**
