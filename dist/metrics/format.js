@@ -36,6 +36,20 @@ function commandLines(metrics) {
     const width = Math.max(...entries.map(([name]) => name.length));
     return entries.map(([name, entry]) => `    ${pad(name, width)}  ${plural(entry.count, "invocation")}  last ${formatTimestamp(entry.lastUsedAt)}`);
 }
+function routingLines(metrics) {
+    const routing = metrics.routing;
+    const mostSelected = Object.entries(routing.selections)
+        .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))
+        .slice(0, 3)
+        .map(([name, entry]) => `${name} (${entry.count})`);
+    const activations = Object.values(routing.activations).reduce((sum, entry) => sum + entry.count, 0);
+    const dropped = Object.values(routing.dropped).reduce((sum, count) => sum + count, 0);
+    return [
+        `    generations ${routing.taskGenerations}   continuations ${routing.continuations}   resets ${routing.resets}`,
+        `    most selected   ${mostSelected.length ? mostSelected.join(", ") : "none"}`,
+        `    activations     ${activations}                 dropped ${dropped}`,
+    ];
+}
 function projectLines(scan, current) {
     if (scan.failed) {
         return ["    (unavailable - the project list could not be read)"];
@@ -89,6 +103,9 @@ export function formatMetricsSnapshot(m, scan) {
         "",
         "  Commands",
         ...commandLines(m),
+        "",
+        "  Routing",
+        ...routingLines(m),
         "",
         `  Impact: ${plural(findings, "issue")} surfaced by the toolkit in this project.`,
     ];

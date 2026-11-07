@@ -4,13 +4,47 @@ import type { PhpToolkitMetrics } from "../src/metrics/store.js";
 
 function metrics(overrides: Partial<PhpToolkitMetrics> = {}): PhpToolkitMetrics {
   return {
-    version: 2,
+    version: 3,
     startedAt: "2026-10-21T09:00:00.000Z",
     projectName: "my-app",
     projectPath: "/home/dev/my-app",
     tools: {},
     commands: {},
     triggerHits: 0,
+    routing: {
+      selections: {},
+      activations: {},
+      unactivated: {},
+      intents: {},
+      concerns: {},
+      dropped: {},
+      taskGenerations: 0,
+      continuations: 0,
+      resets: 0,
+    },
+    verification: {
+      runs: 0,
+      passed: 0,
+      failed: 0,
+      warning: 0,
+      skipped: 0,
+      partial: 0,
+      unavailable: 0,
+      error: 0,
+      timedOut: 0,
+      cancelled: 0,
+      findings: 0,
+      lastRunAt: null,
+    },
+    scanner: {
+      runs: 0,
+      findings: 0,
+      hypotheses: 0,
+      truncated: 0,
+      cacheHits: 0,
+      cacheModes: { content: 0, metadata: 0 },
+      lastRunAt: null,
+    },
     ...overrides,
   };
 }
@@ -72,6 +106,36 @@ describe("formatMetricsSnapshot", () => {
     expect(out).toContain("php-review");
     expect(out).toContain("2 invocations");
     expect(out).toContain("5 issues surfaced by the toolkit in this project.");
+  });
+
+  it("reports routing counters, top-three ordering and totals", () => {
+    const out = formatMetricsSnapshot(
+      metrics({
+        routing: {
+          selections: {
+            "php-testing": { count: 4, lastUsedAt: "" },
+            "php-security": { count: 2, lastUsedAt: "" },
+            "php-debug": { count: 2, lastUsedAt: "" },
+            "php-composer": { count: 1, lastUsedAt: "" },
+          },
+          activations: {
+            "php-testing": { count: 3, lastUsedAt: "" },
+            "php-security": { count: 2, lastUsedAt: "" },
+          },
+          unactivated: {},
+          intents: {},
+          concerns: {},
+          dropped: { "budget:max-skills": 2, "permission:denied": 1 },
+          taskGenerations: 7,
+          continuations: 4,
+          resets: 2,
+        },
+      }),
+    );
+    expect(out).toContain("generations 7   continuations 4   resets 2");
+    // Ties break by name: php-debug before php-security.
+    expect(out).toContain("most selected   php-testing (4), php-debug (2), php-security (2)");
+    expect(out).toContain("activations     5                 dropped 3");
   });
 
   it("distinguishes a tool that could not run from one that found problems", () => {

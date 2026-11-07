@@ -1,11 +1,23 @@
 import { realpathSync } from "node:fs";
 import { basename, resolve, sep } from "node:path";
-import { MetricsStore, type MetricsProject, type MetricsStorage } from "./store.js";
+import {
+  MetricsStore,
+  type MetricsProject,
+  type MetricsStorage,
+  type RoutingMetricEvent,
+} from "./store.js";
 
+export type { RoutingMetricEvent } from "./store.js";
+
+/**
+ * Resolves symlinks eagerly. Cached canonical paths would go stale when a
+ * symlink is retargeted, so every call revalidates the current destination.
+ */
 function tryRealpath(path: string): string {
   try {
     return realpathSync(path);
   } catch {
+    // Missing paths compare textually.
     return path;
   }
 }
@@ -54,10 +66,14 @@ export class MetricsRegistry {
 
   /** The store for a project root, created on first use. */
   storeFor(path: string): MetricsStore {
-    const existing = this.stores.get(path);
+    const canonical = tryRealpath(path);
+    const existing = this.stores.get(canonical);
     if (existing) return existing;
-    const store = new MetricsStore(this.storage, { name: basename(path) || path, path });
-    this.stores.set(path, store);
+    const store = new MetricsStore(this.storage, {
+      name: basename(canonical) || canonical,
+      path: canonical,
+    });
+    this.stores.set(canonical, store);
     // Loading is best effort: an unreadable document must not stop the
     // toolkit, and the store refuses to write over what it could not read.
     void store.init().catch(() => {});
@@ -67,6 +83,13 @@ export class MetricsRegistry {
   /** Loads the active project's document. */
   async initActive(): Promise<void> {
     await this.active.init();
+  }
+
+  /** Records one routing event, attributed to its project root when known. */
+  async recordRouting(event: RoutingMetricEvent, projectRoot?: string): Promise<void> {
+    const store = projectRoot ? this.storeFor(projectRoot) : this.active;
+    if (!store) return;
+    await store.recordRouting(event);
   }
 
   /** Writes pending changes for every known project. */

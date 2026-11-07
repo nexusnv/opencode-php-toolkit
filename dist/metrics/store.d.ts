@@ -23,7 +23,48 @@ export type CommandMetricEntry = {
     count: number;
     lastUsedAt: string;
 };
-export type PhpToolkitMetrics = {
+export interface EntryCounter {
+    count: number;
+    lastUsedAt: string;
+}
+export interface RoutingMetrics {
+    selections: Record<string, EntryCounter>;
+    activations: Record<string, EntryCounter>;
+    unactivated: Record<string, number>;
+    intents: Record<string, number>;
+    concerns: Record<string, number>;
+    dropped: Record<string, number>;
+    taskGenerations: number;
+    continuations: number;
+    resets: number;
+}
+export interface VerificationMetrics {
+    runs: number;
+    passed: number;
+    failed: number;
+    warning: number;
+    skipped: number;
+    partial: number;
+    unavailable: number;
+    error: number;
+    timedOut: number;
+    cancelled: number;
+    findings: number;
+    lastRunAt: string | null;
+}
+export interface ScannerMetrics {
+    runs: number;
+    findings: number;
+    hypotheses: number;
+    truncated: number;
+    cacheHits: number;
+    cacheModes: {
+        content: number;
+        metadata: number;
+    };
+    lastRunAt: string | null;
+}
+export interface PhpToolkitMetrics {
     version: number;
     startedAt: string;
     /** Basename of the project root - display only. */
@@ -34,8 +75,44 @@ export type PhpToolkitMetrics = {
     commands: Record<string, CommandMetricEntry>;
     /** Prompts that mentioned the PHP ecosystem. */
     triggerHits: number;
+    routing: RoutingMetrics;
+    verification: VerificationMetrics;
+    scanner: ScannerMetrics;
+}
+/**
+ * Routing metrics events. `task-generation` fires for every boundary that
+ * starts a new task; `reset` only for explicit task switches; `continuation`
+ * for any (ambiguous) continuation.
+ */
+export type RoutingMetricEvent = {
+    kind: "selected";
+    skill: string;
+} | {
+    kind: "activated";
+    skill: string;
+} | {
+    kind: "unactivated";
+    skill: string;
+} | {
+    kind: "dropped";
+    reason: string;
+} | {
+    kind: "intents";
+    values: string[];
+} | {
+    kind: "concerns";
+    values: string[];
+} | {
+    kind: "task-generation";
+} | {
+    kind: "continuation";
+} | {
+    kind: "reset";
 };
-export declare const METRICS_VERSION = 2;
+export declare const METRICS_VERSION = 3;
+export declare function emptyRoutingMetrics(): RoutingMetrics;
+export declare function emptyVerificationMetrics(): VerificationMetrics;
+export declare function emptyScannerMetrics(): ScannerMetrics;
 /** Storage keys are `${STORAGE_PREFIX}${projectKey(path)}` - one doc per project. */
 export declare const STORAGE_PREFIX = "php-toolkit.metrics.";
 /** Key used by the first (machine-global) implementation, migrated on first read. */
@@ -97,7 +174,11 @@ export type MetricsDelta = {
         lastUsedAt: string;
     }>;
     triggerHits: number;
+    routing: RoutingMetrics;
 };
+export declare function mergeRoutingMetrics(a: RoutingMetrics, b: RoutingMetrics): RoutingMetrics;
+/** Applies one routing event to a counter document. */
+export declare function applyRoutingEvent(target: RoutingMetrics, event: RoutingMetricEvent, now: string): void;
 /**
  * Combines two pending deltas, keeping every increment from both. Used when a
  * flush has to defer a write: increments recorded while that flush was in
@@ -165,6 +246,7 @@ export declare class MetricsStore {
         name: string;
     }): Promise<void>;
     recordTrigger(): Promise<void>;
+    recordRouting(event: RoutingMetricEvent): Promise<void>;
     /**
      * Persists pending changes.
      *

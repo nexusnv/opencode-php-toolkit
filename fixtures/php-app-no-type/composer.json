@@ -1,0 +1,1 @@
+{"name":"acme/app-no-type","require":{"php":"^8.2"},"autoload":{"psr-4":{"AcmeNoType\\":"src/"}}}

@@ -33,4 +33,8 @@ export declare const COMMAND_DEFS: readonly [{
     readonly file: "commands/php-scaffold.md";
     readonly name: "php-scaffold";
     readonly fallback: "Scaffold PSR-4 PHP class + test";
+}, {
+    readonly file: "commands/php-toolkit-status.md";
+    readonly name: "php-toolkit-status";
+    readonly fallback: "Show PHP toolkit routing diagnostics";
 }];
