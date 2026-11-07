@@ -35,7 +35,7 @@
   { "id": "R34", "prompt": "Add a factory for creating invoices.", "expected": ["php-design-patterns"], "enabledInPhase": 2, "reason": "pattern-library-not-shipped" },
   { "id": "R35", "prompt": "Refactor the switch statement into a state machine.", "expected": ["php-architecture", "php-pattern-state"], "enabledInPhase": 2, "reason": "pattern-library-not-shipped" },
   { "id": "R36", "prompt": "Add an adapter for the legacy payment API.", "expected": ["php-pattern-adapter"], "enabledInPhase": 2, "reason": "pattern-library-not-shipped" },
-  { "id": "R37", "prompt": "Modernize the billing code.", "expected": ["php-modernize", "php-composer"], "enabledInPhase": 1 },
+  { "id": "R37", "prompt": "Modernize the legacy billing code.", "expected": ["php-modernize", "php-composer"], "enabledInPhase": 1 },
   { "id": "R38", "prompt": "Add a singleton for the database connection.", "expected": ["php-design-patterns"], "enabledInPhase": 2, "reason": "pattern-library-not-shipped" },
   { "id": "R39", "prompt": "Refactor this 500-line controller.", "expected": ["php-architecture"], "enabledInPhase": 1 },
   { "id": "R40", "prompt": "Add a new feature flag service.", "expected": ["php-testing"], "enabledInPhase": 1 },
@@ -47,5 +47,6 @@
   { "id": "R46", "prompt": "Add a method to the class.", "expected": ["php-testing"], "agent": "php-tester", "enabledInPhase": 1 },
   { "id": "R47", "prompt": "Review this PR for security issues.", "expected": ["php-standards", "php-security"], "agent": "php-reviewer", "enabledInPhase": 1 },
   { "id": "R48", "prompt": "Fix the slow query.", "expected": ["php-debug", "php-testing"], "agent": "php-debugger", "enabledInPhase": 1 },
-  { "id": "R49", "prompt": "Add a new service.", "expected": ["php-architecture", "php-design-patterns", "php-testing"], "agent": "php-architect", "enabledInPhase": 2, "reason": "pattern-library-not-shipped" }
+  { "id": "R49", "prompt": "Add a new service.", "expected": ["php-architecture", "php-design-patterns", "php-testing"], "agent": "php-architect", "enabledInPhase": 2, "reason": "pattern-library-not-shipped" },
+  { "id": "R50", "prompt": "Modernize the billing code.", "expected": ["php-modernize", "php-composer"], "enabledInPhase": 1 }
 ]

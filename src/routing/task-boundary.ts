@@ -1,4 +1,5 @@
 import type { Concern, Intent, MaintainSubtype, PreviousTask } from "./types.js";
+import { MAX_PATH_LENGTH } from "./types.js";
 
 /** The subset of SessionRoutingState the boundary machine reads. */
 export interface TaskBoundaryState {
@@ -56,7 +57,12 @@ const STALE_TASK_MS = 30 * 60_000;
 const MAX_ACTIVE_FILES = 64;
 
 function boundedFiles(files: readonly string[]): string[] {
-  return [...new Set(files)].slice(0, MAX_ACTIVE_FILES);
+  // Hydration rejects a document containing an over-long path. Drop such
+  // entries here so every tracked file can round-trip through storage.
+  return [...new Set(files.filter((file) => file.length <= MAX_PATH_LENGTH))].slice(
+    0,
+    MAX_ACTIVE_FILES,
+  );
 }
 
 function snapshot(active: TaskBoundaryState): PreviousTask {

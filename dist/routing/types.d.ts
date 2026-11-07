@@ -10,6 +10,8 @@ export type SkillUnactivatedStatus = "pending" | "awaiting-approval" | "denied";
 export type VerificationStatus = "passed" | "failed" | "partial" | "unavailable" | "error";
 /** Persisted attempt counters must stay within the hydration bound. */
 export declare const MAX_UNACTIVATED_ATTEMPTS = 1000;
+/** Maximum persisted path length accepted by hydration and task tracking. */
+export declare const MAX_PATH_LENGTH = 4096;
 export interface ClassificationResult {
     intents: Intent[];
     concerns: Concern[];

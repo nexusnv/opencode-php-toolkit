@@ -1,3 +1,4 @@
+import { MAX_PATH_LENGTH } from "./types.js";
 const TASK_SWITCH = /\b(new task|unrelated|switch to|different problem)\b/i;
 const CONTINUATION_MARKER = /\b(also|now|then|that|it|this|same|continue|next|why)\b|\bfix that\b/i;
 // Directives that genuinely extend the current task. Demonstrative pronouns
@@ -15,7 +16,9 @@ const PHP_AGENTS = new Set([
 const STALE_TASK_MS = 30 * 60_000;
 const MAX_ACTIVE_FILES = 64;
 function boundedFiles(files) {
-    return [...new Set(files)].slice(0, MAX_ACTIVE_FILES);
+    // Hydration rejects a document containing an over-long path. Drop such
+    // entries here so every tracked file can round-trip through storage.
+    return [...new Set(files.filter((file) => file.length <= MAX_PATH_LENGTH))].slice(0, MAX_ACTIVE_FILES);
 }
 function snapshot(active) {
     return {

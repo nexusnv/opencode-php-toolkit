@@ -1,4 +1,4 @@
-import { CONCERNS, INTENTS, MAX_UNACTIVATED_ATTEMPTS } from "./types.js";
+import { CONCERNS, INTENTS, MAX_PATH_LENGTH, MAX_UNACTIVATED_ATTEMPTS } from "./types.js";
 import { createSessionState } from "./state.js";
 export const SESSION_STORAGE_PREFIX = "php-toolkit:session:";
 export const SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -6,7 +6,6 @@ const MAX_CACHED_SESSIONS = 100;
 const MAX_ARRAY_ITEMS = 256;
 const MAX_ENUM_ITEMS = 16;
 const MAX_ID_LENGTH = 128;
-const MAX_PATH_LENGTH = 4096;
 const MAX_REASON_LENGTH = 256;
 const MAX_COUNTER = Number.MAX_SAFE_INTEGER;
 const pendingWrites = new Map();

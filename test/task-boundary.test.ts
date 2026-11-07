@@ -158,6 +158,19 @@ describe("transitionTask", () => {
     expect(next.mode).toBe("continuation");
   });
 
+  it("drops attached paths longer than the persistence limit", () => {
+    const oversized = "x".repeat(4097);
+    const next = transitionTask({
+      prompt: "also add tests",
+      current: { intents: ["Test"], concerns: ["Testing"], maintainSubtype: null },
+      active: { ...active, activeFiles: [] },
+      files: [oversized, "src/Example.php"],
+      agent: null,
+      now: Date.now(),
+    });
+    expect(next.activeFiles).toEqual(["src/Example.php"]);
+  });
+
   it("recomputes the Maintain subtype for a new task", () => {
     const next = transitionTask({
       prompt: "Add a CSV export feature.",
