@@ -131,6 +131,15 @@ describe("classify", () => {
     expect(result.promotedPatterns).toEqual(["state"]);
   });
 
+  it("does not let a data provider count as a design-pattern provider", () => {
+    const result = classify({
+      prompt: "Add a data provider for the invoice tests.",
+      ...base,
+    });
+    expect(result.scores["Design patterns"]).toBe(0);
+    expect(result.scores.Testing).toBeGreaterThanOrEqual(2);
+  });
+
   it("records no promoted patterns without PHP context", () => {
     const result = classify({
       prompt: "Use the strategy pattern in this TypeScript file.",

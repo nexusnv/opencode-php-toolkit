@@ -131,6 +131,7 @@ export async function runRouting(
     denied: deniedSkills,
     scores: current.scores,
     agentDefault: null,
+    promotedPatterns: current.promotedPatterns,
   });
   const explicitIDs = new Set(input.skills.map((skill) => skill.id));
   const permissioned = filterByPermission(

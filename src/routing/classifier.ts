@@ -245,6 +245,61 @@ function matchTarget(working: string, entries: typeof INTENT_SIGNALS): TargetMat
   return { score, terms };
 }
 
+/**
+ * Matches concern signals across targets. Multi-word phrases are matched and
+ * consumed first, so "data provider" counts for Testing but does not also
+ * count as the Design patterns "provider" token. Single tokens may still
+ * score more than one concern when the dictionary lists them for both.
+ */
+function matchConcernSignals(working: string): Map<Concern, TargetMatch> {
+  const phrases = new Map<string, Map<Concern, number>>();
+  for (const entry of CONCERN_SIGNALS) {
+    if (!entry.terms.some((term) => term.includes(" "))) continue;
+    for (const term of entry.terms) {
+      if (!term.includes(" ")) continue;
+      const targets = phrases.get(term) ?? new Map<Concern, number>();
+      const target = entry.target as Concern;
+      targets.set(target, Math.max(targets.get(target) ?? 0, entry.weight));
+      phrases.set(term, targets);
+    }
+  }
+
+  const results = new Map<Concern, TargetMatch>();
+  const matchFor = (target: Concern): TargetMatch => {
+    const existing = results.get(target) ?? { score: 0, terms: new Map<string, number>() };
+    results.set(target, existing);
+    return existing;
+  };
+
+  let text = working;
+  const sortedPhrases = [...phrases.entries()].sort(
+    (a, b) => b[0].length - a[0].length || a[0].localeCompare(b[0]),
+  );
+  for (const [term, targets] of sortedPhrases) {
+    const ranges: Array<[number, number]> = [];
+    for (const match of text.matchAll(termToRegex(term))) {
+      const start = match.index ?? 0;
+      ranges.push([start, start + match[0].length]);
+    }
+    if (!ranges.length) continue;
+    for (const [target, weight] of targets) {
+      const result = matchFor(target);
+      result.score += weight;
+      result.terms.set(term, weight);
+    }
+    text = consumeRanges(text, ranges);
+  }
+
+  for (const target of CONCERN_PRIORITY) {
+    const entries = CONCERN_SIGNALS.filter((entry) => entry.target === target);
+    const match = matchTarget(text, entries);
+    const result = matchFor(target);
+    result.score += match.score;
+    for (const [term, weight] of match.terms) result.terms.set(term, weight);
+  }
+  return results;
+}
+
 function matchFileSignals(files: readonly string[]): {
   points: Partial<Record<Target, number>>;
   php: boolean;
@@ -416,11 +471,20 @@ export function classify(input: ClassifierInput): ClassificationResult {
     matchedByTarget.set(entry.target, existing);
   }
 
-  for (const target of ALL_TARGETS) {
-    const entries = [...INTENT_SIGNALS, ...CONCERN_SIGNALS].filter(
-      (entry) => entry.target === target,
-    );
+  for (const target of INTENT_PRIORITY) {
+    const entries = INTENT_SIGNALS.filter((entry) => entry.target === target);
     const match = matchTarget(withoutExplicit, entries);
+    scores[target] += match.score;
+    for (const [term, weight] of match.terms) {
+      matchedTerms.set(term, Math.max(matchedTerms.get(term) ?? 0, weight));
+      matchedByTarget.get(target)?.set(term, weight);
+    }
+  }
+
+  const concernMatches = matchConcernSignals(withoutExplicit);
+  for (const target of CONCERN_PRIORITY) {
+    const match = concernMatches.get(target);
+    if (!match) continue;
     scores[target] += match.score;
     for (const [term, weight] of match.terms) {
       matchedTerms.set(term, Math.max(matchedTerms.get(term) ?? 0, weight));
