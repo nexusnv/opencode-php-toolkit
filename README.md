@@ -71,7 +71,7 @@ opencode plugin add file:///home/leonidas/dev/nexusnv/opencode-php-toolkit
 ## What you get
 
 - Agents (`agents/php-*.md`, `mode: subagent`): `php-reviewer`, `php-debugger`, `php-modernizer`, `php-tester`. On install, the package's `postinstall` script copies these four files into `~/.config/opencode/agents/` as a convenience, never overwriting files that already exist (v2 `AgentEditor` has no `add`; transforms can't create agents — files are the source of truth). Set `PHP_TOOLKIT_SKIP_AGENT_COPY=1` in the environment to opt out. The script writes nothing besides those four files (the OpenCode `commands/` directory is not touched). To undo after install, delete `php-reviewer.md`, `php-debugger.md`, `php-modernizer.md` and `php-tester.md` from `~/.config/opencode/agents/`.
-- Skills (8, autoinvoke): `php-standards`, `php-static-analysis`, `php-testing`, `php-security`, `php-modernize`, `php-composer`, `php-architecture`, `php-debug`.
+- Skills (13: 9 advertised, 4 hidden): `php-standards`, `php-static-analysis`, `php-testing`, `php-security`, `php-modernize`, `php-composer`, `php-architecture`, `php-debug`, and the advertised `php-design-patterns` index. Hidden core pattern skills (`autoinvoke: false`) are attached only by the router: `php-pattern-strategy`, `php-pattern-adapter`, `php-pattern-decorator`, `php-pattern-state`.
 - Commands (8): `/php-review`, `/php-analyze`, `/php-fix-style`, `/php-test`, `/php-audit`, `/php-upgrade`, `/php-scaffold`, `/php-toolkit-status`.
 - Tools (`php_*` namespace, read-only unless noted):
   - `php_project_detect` — composer intel incl. analyzer/fixer config files and `composer config.platform.php`; no exec
@@ -83,13 +83,26 @@ opencode plugin add file:///home/leonidas/dev/nexusnv/opencode-php-toolkit
   - `php_metrics` — local usage metrics; `reset: true` clears this project's metrics, `export: true` dumps the snapshot as raw JSON (absolute project path omitted)
 - Hooks: `prompt` runs deterministic routing for PHP-context prompts, `context` adds the stable L0 engineering constitution plus one compact routing-state part, `tool.execute.before` warns on destructive `composer update` / `rector process` without `--dry-run` / `php-cs-fixer fix` without `--dry-run`.
 
-## Reactive routing (0.2.0)
+## Reactive routing (0.3.0)
 
 Routing is deterministic, silent and risk-based by default. The plugin classifies each
 PHP-context prompt into at most two intents (Build, Design, Review, Debug, Test, Maintain)
 and three concerns (Security, Testing, Debugging, Static analysis, Architecture, Design
-patterns, Coding standards, Dependencies), then attaches up to three of the eight existing
-skills. No pattern skills ship in this phase. Non-PHP prompts attach nothing.
+patterns, Coding standards, Dependencies), then attaches up to three skills. Non-PHP
+prompts attach nothing.
+
+Pattern routing is problem-first. A generic design task attaches the `php-design-patterns`
+index; one named promoted pattern (strategy, adapter, decorator, state) attaches that core
+skill; two or more named patterns in an actionable task attach at most two; comparison
+questions use the index. Repository and Ports & Adapters are references, not promoted
+skills. The index reads at most two reference files on demand, and references never count
+against the attachment budget.
+
+`architectureMode` controls the guidance rendered in the state part: `risk` (default) asks
+for a one-line rationale on small reversible changes, a stated pattern and trade-off on
+moderate changes, and 2–3 options plus approval for significant boundary, persistence,
+events, DI or breaking API changes; `strict` always asks for a design note and approval;
+`off` removes the architecture line.
 
 Attached is not loaded. `/php-toolkit-status` reports `selected`, `attached` and
 `activated` separately; only a `session.skill.activated` event proves a skill loaded.

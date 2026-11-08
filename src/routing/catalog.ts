@@ -1,6 +1,6 @@
 import type { PromotedPattern, Target } from "./types.js";
 
-export type CatalogKind = "concern" | "pattern-index" | "pattern-core";
+export type CatalogKind = "concern" | "maintain" | "pattern-index" | "pattern-core";
 
 export interface CatalogEntry {
   id: string;
@@ -20,6 +20,7 @@ export const CATALOG: readonly CatalogEntry[] = [
   { id: "php-static-analysis", target: "Static analysis", order: 50, kind: "concern" },
   { id: "php-standards", target: "Coding standards", order: 60, kind: "concern" },
   { id: "php-composer", target: "Dependencies", order: 70, kind: "concern" },
+  { id: "php-modernize", target: "Maintain", order: 75, kind: "maintain" },
   { id: "php-design-patterns", target: "Design patterns", order: 80, kind: "pattern-index" },
   {
     id: "php-pattern-strategy",

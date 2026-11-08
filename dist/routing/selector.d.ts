@@ -1,4 +1,4 @@
-import type { Concern, Intent, MaintainSubtype, Target, UnactivatedSkill } from "./types.js";
+import type { Concern, Intent, MaintainSubtype, PromotedPattern, Target, UnactivatedSkill } from "./types.js";
 export interface SelectorInput {
     prompt: string;
     intents: Intent[];
@@ -21,6 +21,8 @@ export interface SelectorInput {
     denied?: ReadonlySet<string>;
     scores?: Partial<Record<Target, number>>;
     agentDefault?: Intent | null;
+    /** Promoted pattern names matched in the prompt, strongest first. */
+    promotedPatterns?: readonly PromotedPattern[];
 }
 export interface SelectorResult {
     selected: string[];

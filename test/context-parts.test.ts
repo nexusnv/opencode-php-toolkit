@@ -61,6 +61,61 @@ describe("context parts", () => {
     expect(text).toContain("framework-specific rules live in the sibling toolkit");
   });
 
+  it("renders risk-based architecture guidance", () => {
+    const text = renderToolkitStatePart({
+      profile: { type: "application", frameworkHints: ["none"] } as never,
+      state: {
+        taskGeneration: 1,
+        mode: "risk",
+        activeIntents: ["Design"],
+        activeConcerns: ["Architecture"],
+        selectedSkills: [],
+        attachedSkills: [],
+        activatedSkills: new Set(),
+        unactivatedSkills: [],
+      } as never,
+    });
+    expect(text).toContain("Architecture: risk mode");
+    expect(text).toContain("one-line rationale");
+    expect(text).toContain("2–3 options and approval");
+  });
+
+  it("renders strict architecture guidance", () => {
+    const text = renderToolkitStatePart({
+      profile: { type: "application", frameworkHints: ["none"] } as never,
+      state: {
+        taskGeneration: 1,
+        mode: "strict",
+        activeIntents: ["Design"],
+        activeConcerns: ["Architecture"],
+        selectedSkills: [],
+        attachedSkills: [],
+        activatedSkills: new Set(),
+        unactivatedSkills: [],
+      } as never,
+    });
+    expect(text).toContain("Architecture: strict mode");
+    expect(text).toContain("design note");
+    expect(text).toContain("approval before implementation");
+  });
+
+  it("omits architecture guidance when the mode is off", () => {
+    const text = renderToolkitStatePart({
+      profile: { type: "application", frameworkHints: ["none"] } as never,
+      state: {
+        taskGeneration: 1,
+        mode: "off",
+        activeIntents: ["Design"],
+        activeConcerns: ["Architecture"],
+        selectedSkills: [],
+        attachedSkills: [],
+        activatedSkills: new Set(),
+        unactivatedSkills: [],
+      } as never,
+    });
+    expect(text).not.toContain("Architecture:");
+  });
+
   it("evicts the stalest render context when the cache is full", () => {
     const contexts = new RoutingRenderContexts();
     const id = (n: number) => `render-lru-${n}`;

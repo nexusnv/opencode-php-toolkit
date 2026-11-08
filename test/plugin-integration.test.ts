@@ -196,6 +196,34 @@ describe("plugin routing integration", () => {
     await cleanup();
   });
 
+  it("attaches a core pattern skill for a narrow pattern prompt", async () => {
+    const { fake, cleanup } = await setupPlugin({ agent: null });
+    const event = promptEvent("s1", "Add a decorator around the payment gateway.", {
+      files: phpFile,
+    });
+    await fake.triggerPromptHook(event);
+    const ids = event.prompt.skills?.map((skill) => skill.id) ?? [];
+    expect(ids).toContain("php-pattern-decorator");
+    expect(ids).not.toContain("php-design-patterns");
+    await cleanup();
+  });
+
+  it("registers core pattern skills as hidden and the index as advertised", async () => {
+    const { fake, cleanup } = await setupPlugin();
+    const registered = [...fake.skills] as Array<{ id: string; autoinvoke: boolean }>;
+    const byId = new Map(registered.map((skill) => [skill.id, skill]));
+    expect(byId.get("php-design-patterns")?.autoinvoke).toBe(true);
+    for (const id of [
+      "php-pattern-strategy",
+      "php-pattern-adapter",
+      "php-pattern-decorator",
+      "php-pattern-state",
+    ]) {
+      expect(byId.get(id)?.autoinvoke).toBe(false);
+    }
+    await cleanup();
+  });
+
   it("attaches nothing for a non-PHP prompt", async () => {
     const { fake, cleanup } = await setupPlugin({ agent: null });
     const event = promptEvent("s1", "Refactor this TypeScript component.");

@@ -1,6 +1,6 @@
 import { basename, join, resolve } from "node:path";
 import { Plugin } from "@opencode/plugin";
-import { COMMAND_DEFS, SKILL_IDS, PKG_ROOT, loadText, parseFrontmatter } from "./content.js";
+import { COMMAND_DEFS, HIDDEN_SKILL_IDS, SKILL_IDS, PKG_ROOT, loadText, parseFrontmatter } from "./content.js";
 import { detectPhpProject, formatDetection } from "./tools/detect.js";
 import { composerAudit, composerOutdated, composerValidate, phpLint, phpStaticAnalysis, phpTest } from "./tools/php-tools.js";
 import { MetricsRegistry, resolveProjectScope } from "./metrics/registry.js";
@@ -155,7 +155,7 @@ export default Plugin.define({
                     }
                     for (const s of skills) {
                         if (!editor.get(s.id)) {
-                            editor.add({ id: s.id, name: s.name, description: s.description, path: s.path, content: s.content, autoinvoke: true });
+                            editor.add({ id: s.id, name: s.name, description: s.description, path: s.path, content: s.content, autoinvoke: !HIDDEN_SKILL_IDS.has(s.id) });
                         }
                     }
                 }));

@@ -4,6 +4,40 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-08
+
+### Added
+
+- Problem-first `php-design-patterns` index skill with the engineering-problem
+  table, guardrails, pattern selection rule, and 34 on-demand references
+  (repository, ports & adapters, DDD, CQRS, event sourcing and the classic
+  catalog). References never count against the attachment budget.
+- Four hidden P0 core pattern skills: `php-pattern-strategy`,
+  `php-pattern-adapter`, `php-pattern-decorator`, `php-pattern-state`. They
+  register with `autoinvoke: false` and are attached only by the router.
+- Deterministic pattern selection: Design attaches the index by default; one
+  named promoted pattern attaches that core skill; two or more named patterns
+  in an actionable task attach at most two; comparison and knowledge questions
+  use the index; P1 names fall back to the index. Patterns require a score of
+  `>= 2` outside the Design intent.
+- Risk-based architecture guidance in the state part. `architectureMode:
+  "risk"` renders small/moderate/significant change expectations, `"strict"`
+  requires a design note and approval, and `"off"` removes the line.
+- The full R01–R50 routing corpus is enabled for Phase 2, including pattern
+  index, core pattern, comparison and P1 fallback cases.
+
+### Fixed
+
+- Multi-word concern phrases now consume their tokens across concern targets,
+  so a Testing `data provider` no longer also scores the Design patterns
+  `provider` signal. Single tokens may still score more than one concern.
+
+### Changed
+
+- The routing catalog distinguishes concern, Maintain, pattern-index and
+  pattern-core entries; the pattern index is advertised and core pattern
+  skills stay hidden.
+
 ## [0.2.0] - 2026-11-04
 
 ### Added

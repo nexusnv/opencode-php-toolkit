@@ -4,7 +4,9 @@ export declare function parseFrontmatter(body: string): {
     front: Record<string, string>;
     content: string;
 };
-export declare const SKILL_IDS: readonly ["php-standards", "php-static-analysis", "php-testing", "php-security", "php-modernize", "php-composer", "php-architecture", "php-debug"];
+export declare const SKILL_IDS: readonly ["php-standards", "php-static-analysis", "php-testing", "php-security", "php-modernize", "php-composer", "php-architecture", "php-debug", "php-design-patterns", "php-pattern-strategy", "php-pattern-adapter", "php-pattern-decorator", "php-pattern-state"];
+/** Core pattern skills are attached by the router, not advertised for autoinvoke. */
+export declare const HIDDEN_SKILL_IDS: ReadonlySet<string>;
 export declare const COMMAND_DEFS: readonly [{
     readonly file: "commands/php-review.md";
     readonly name: "php-review";

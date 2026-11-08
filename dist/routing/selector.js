@@ -1,5 +1,5 @@
 import { MAX_ROUTER_SKILL_CHARS } from "../config.js";
-import { CONCERN_SKILL_BY_TARGET } from "./catalog.js";
+import { CONCERN_SKILL_BY_TARGET, PATTERN_CORE_BY_NAME, PATTERN_INDEX } from "./catalog.js";
 import { normalizePrompt, stripCodeFences, termToRegex } from "./classifier.js";
 import { CONCERN_PRIORITY } from "./signals.js";
 const FEATURE_SCALE_TERMS = [
@@ -37,7 +37,7 @@ function contentLength(contentLengths, id) {
  * concern priority, then the remaining budget.
  */
 export function selectSkills(input) {
-    const { prompt, intents, concerns, maintainSubtype, questionForm, explicit, activated, unactivated, config, contentLengths, available, denied, scores, agentDefault, } = input;
+    const { prompt, intents, concerns, maintainSubtype, questionForm, explicit, activated, unactivated, config, contentLengths, available, denied, scores, agentDefault, promotedPatterns = [], } = input;
     const normalized = stripCodeFences(normalizePrompt(prompt)).replace(/@[a-z0-9-]+/g, " ");
     const featureScale = matchesAny(normalized, FEATURE_SCALE_TERMS);
     const broadReview = matchesAny(normalized, BROAD_REVIEW_TERMS);
@@ -196,6 +196,38 @@ export function selectSkills(input) {
                 tryAdd(coSkill.id, coSkill.reason);
             }
         }
+    }
+    // Pattern skills are co-skills of the Design intent and of any actionable
+    // task with Patterns >= 2. A comparison or knowledge question with several
+    // names uses the index because comparing patterns is the index's job.
+    const patternChoices = () => {
+        const patternsScore = scores?.["Design patterns"] ?? 0;
+        const design = effectiveIntents.includes("Design");
+        const actionable = effectiveIntents.some((intent) => intent === "Build" || intent === "Design" || intent === "Review" || intent === "Maintain");
+        if (promotedPatterns.length === 0) {
+            return design || patternsScore >= 2
+                ? [{ id: PATTERN_INDEX.id, reason: "pattern:index" }]
+                : [];
+        }
+        // Design is the one intent where the index is required below the normal
+        // Patterns >= 2 gate; every other intent respects the threshold.
+        if (!design && patternsScore < 2)
+            return [];
+        if (promotedPatterns.length >= 2 && !actionable) {
+            return [{ id: PATTERN_INDEX.id, reason: "pattern:index" }];
+        }
+        const wanted = promotedPatterns.slice(0, actionable ? 2 : 1);
+        const out = [];
+        for (const name of wanted) {
+            const entry = PATTERN_CORE_BY_NAME.get(name);
+            if (entry)
+                out.push({ id: entry.id, reason: `pattern:${name}` });
+        }
+        return out;
+    };
+    for (const choice of patternChoices()) {
+        coSkillSet.add(choice.id);
+        tryAdd(choice.id, choice.reason);
     }
     const concernCandidates = [...CONCERN_SKILL_BY_TARGET.values()]
         .filter((entry) => concerns.includes(entry.target))

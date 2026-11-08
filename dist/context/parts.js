@@ -13,6 +13,13 @@ export function renderToolkitStatePart(context) {
     }
     const mode = context.boundaryMode ? ` (${context.boundaryMode})` : "";
     lines.push(`Task: generation ${state.taskGeneration}${mode} | intents: ${state.activeIntents.join(", ") || "none"} | concerns: ${state.activeConcerns.join(", ") || "none"}`);
+    const architecture = state.mode === "risk"
+        ? "Architecture: risk mode — small reversible changes proceed with a one-line rationale; moderate changes state the chosen pattern and trade-off first; significant boundary, persistence, events, DI or breaking API changes need 2–3 options and approval."
+        : state.mode === "strict"
+            ? "Architecture: strict mode — present a design note and wait for approval before implementation."
+            : null;
+    if (architecture)
+        lines.push(architecture);
     const selected = state.selectedSkills.length ? state.selectedSkills.join(", ") : "none";
     const attached = state.attachedSkills.length ? state.attachedSkills.join(", ") : "none";
     const activated = state.activatedSkills.size ? [...state.activatedSkills].join(", ") : "none";

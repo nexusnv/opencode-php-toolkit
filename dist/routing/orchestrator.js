@@ -79,6 +79,7 @@ export async function runRouting(ctx, input, config, profileCache, sessions, con
         denied: deniedSkills,
         scores: current.scores,
         agentDefault: null,
+        promotedPatterns: current.promotedPatterns,
     });
     const explicitIDs = new Set(input.skills.map((skill) => skill.id));
     const permissioned = filterByPermission(selection, session?.permissions ?? [], explicitIDs);

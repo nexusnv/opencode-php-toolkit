@@ -1,5 +1,5 @@
 import type { ProjectProfile } from "../profile.js";
-import type { ClassificationResult, SessionRoutingState } from "./types.js";
+import { type ClassificationResult, type SessionRoutingState } from "./types.js";
 export interface ClassifierInput {
     prompt: string;
     files: readonly string[];
