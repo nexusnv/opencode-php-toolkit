@@ -71,6 +71,24 @@ describe("resolveProjectScope", () => {
       rmSync(linkParent, { recursive: true, force: true });
     }
   });
+
+  it("re-resolves a retargeted symlink instead of reusing a stale destination", () => {
+    const first = mkdtempSync(join(tmpdir(), "php-toolkit-first-"));
+    const second = mkdtempSync(join(tmpdir(), "php-toolkit-second-"));
+    const parent = mkdtempSync(join(tmpdir(), "php-toolkit-retarget-"));
+    const link = join(parent, "linked");
+    symlinkSync(first, link);
+    try {
+      expect(resolveProjectScope(link)).toBe(realpathSync(first));
+      rmSync(link);
+      symlinkSync(second, link);
+      expect(resolveProjectScope(link)).toBe(realpathSync(second));
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+      rmSync(first, { recursive: true, force: true });
+      rmSync(second, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("MetricsRegistry", () => {
@@ -127,6 +145,25 @@ describe("MetricsRegistry", () => {
     };
     expect(other.tools.php_lint.findings).toBe(2);
     expect(own.tools.php_lint.findings).toBe(1);
+  });
+
+  it("attributes explicit routing events to their project root", async () => {
+    const { storage, data } = fakeStorage();
+    const registry = new MetricsRegistry(storage, ACTIVE);
+    await registry.initActive();
+    await registry.recordRouting({ kind: "selected", skill: "php-testing" }, "/home/dev/other-app");
+    await registry.recordRouting({ kind: "selected", skill: "php-debug" }, ACTIVE.path);
+    await registry.flushAll();
+    const other = data.get(storageKeyFor("/home/dev/other-app")) as {
+      routing: { selections: Record<string, { count: number }> };
+    };
+    const own = data.get(storageKeyFor(ACTIVE.path)) as {
+      routing: { selections: Record<string, { count: number }> };
+    };
+    expect(other.routing.selections["php-testing"].count).toBe(1);
+    expect(other.routing.selections["php-debug"]).toBeUndefined();
+    expect(own.routing.selections["php-debug"].count).toBe(1);
+    expect(own.routing.selections["php-testing"]).toBeUndefined();
   });
 
   it("survives a project whose document cannot be read", async () => {

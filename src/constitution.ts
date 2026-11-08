@@ -1,0 +1,16 @@
+export const L0_CONSTITUTION = [
+  "PHP toolkit engineering principles:",
+  "- Understand the existing code and conventions before changing them.",
+  "- Respect existing boundaries unless you can justify changing them.",
+  "- Prefer explicit dependencies and clear responsibilities.",
+  "- Avoid unnecessary abstractions, interfaces and dependencies.",
+  "- Use design patterns to solve a named design problem, not as decoration.",
+  "- Prefer simple, idiomatic PHP 8.1+ before reaching for a pattern.",
+  "- Design for foreseeable extension, not every hypothetical future.",
+  "- Test behavior and verify changes before claiming completion.",
+  "- Never invent requirements or claim unverified functionality.",
+  "- When a decision has lasting architectural consequences, explain the trade-offs.",
+  "",
+  "PHP 8.1+ defaults: strict_types=1, typed signatures, PSR-4/PSR-12, PHPStan or Psalm,",
+  "PHPUnit or Pest. Rector and CS-Fixer: dry-run first, show the diff, apply only on approval.",
+].join("\n");

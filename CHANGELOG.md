@@ -4,10 +4,38 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-11-04
 
 ### Added
 
+- Deterministic intent × concern routing for the eight existing PHP skills.
+  PHP-context prompts are classified into intents (Build, Design, Review,
+  Debug, Test, Maintain) and concerns (Security, Testing, Debugging, Static
+  analysis, Architecture, Design patterns, Coding standards, Dependencies);
+  up to three skills attach silently. A high-confidence Security concern may
+  use the fourth hard-ceiling slot, and Maintain subtypes survive continuations.
+  `architectureMode: "off"` disables classifier design gating. No pattern
+  skills ship in this phase.
+- Routing lifecycle hardening: persisted activation/permission events hydrate
+  sessions after a restart, writes are serialized per session, stale session
+  documents are pruned after 30 days since the last recorded PHP-context
+  prompt (or the task start when no prompt is recorded), and routing
+  metrics attribute to the session’s project root. `maxSkillChars` is capped
+  at 16,000, and reserved later-phase options have no effect yet. A non-PHP
+  prompt drops the previous routing-state system part for the session, and
+  the `resets` routing counter counts explicit task switches while
+  `taskGenerations` counts every new task.
+- Per-session project profiles with application/library confidence and
+  root+subpath isolation.
+- L0 engineering constitution, replacing the static one-line typed-PHP hint.
+- Task-generation boundaries so unrelated tasks do not inherit prior
+  concerns.
+- Selected/attached/activated skill state with permission-aware attachment;
+  denied router skills are recorded but never attached.
+- `/php-toolkit-status` diagnostics, metrics v3 routing counters and
+  best-effort session persistence.
+- `autoSkills: "hint" | "off"` escape hatches; the default remains `attach`
+  and silent.
 - `php_static_analysis` tool: PHPStan (or Psalm when absent) with JSON output.
   Analysis errors count as findings; an unusable analyzer is an error, never a
   false zero. Pass `tool: "phpstan" | "psalm"` to force one.
