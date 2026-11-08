@@ -14,6 +14,8 @@ export type Concern = (typeof CONCERNS)[number];
 export type Target = Intent | Concern;
 export type Priority = number;
 export type MaintainSubtype = "modernization" | "dependency" | "refactor";
+export const PROMOTED_PATTERNS = ["strategy", "adapter", "decorator", "state"] as const;
+export type PromotedPattern = (typeof PROMOTED_PATTERNS)[number];
 export type Confidence = "high" | "medium" | "low";
 export type SkillUnactivatedStatus = "pending" | "awaiting-approval" | "denied";
 export type VerificationStatus = "passed" | "failed" | "partial" | "unavailable" | "error";
@@ -32,6 +34,8 @@ export interface ClassificationResult {
   frameworkContext: string[];
   phpContext: boolean;
   questionForm: boolean;
+  /** Promoted pattern names found in the prompt, strongest first. */
+  promotedPatterns: PromotedPattern[];
   reasonCodes: string[];
 }
 

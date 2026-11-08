@@ -1,12 +1,20 @@
 import type { ProjectProfile } from "../profile.js";
-import { CONCERN_PRIORITY, CONCERN_SIGNALS, INTENT_PRIORITY, INTENT_SIGNALS } from "./signals.js";
-import type {
-  ClassificationResult,
-  Concern,
-  Intent,
-  MaintainSubtype,
-  SessionRoutingState,
-  Target,
+import {
+  CONCERN_PRIORITY,
+  CONCERN_SIGNALS,
+  INTENT_PRIORITY,
+  INTENT_SIGNALS,
+  PATTERN_NAME_SIGNALS,
+} from "./signals.js";
+import {
+  PROMOTED_PATTERNS,
+  type ClassificationResult,
+  type Concern,
+  type Intent,
+  type MaintainSubtype,
+  type PromotedPattern,
+  type SessionRoutingState,
+  type Target,
 } from "./types.js";
 
 export interface ClassifierInput {
@@ -314,6 +322,21 @@ function patternNamePresent(working: string): boolean {
   return PATTERN_NAME_TERMS.some((term) => termToRegex(term).test(working));
 }
 
+function promotedPatternsIn(working: string): PromotedPattern[] {
+  const best = new Map<PromotedPattern, number>();
+  for (const signal of PATTERN_NAME_SIGNALS) {
+    if (!termToRegex(signal.term).test(working)) continue;
+    best.set(signal.name, Math.max(best.get(signal.name) ?? 0, signal.weight));
+  }
+  return [...best.entries()]
+    .sort((a, b) => {
+      const byWeight = b[1] - a[1];
+      if (byWeight !== 0) return byWeight;
+      return PROMOTED_PATTERNS.indexOf(a[0]) - PROMOTED_PATTERNS.indexOf(b[0]);
+    })
+    .map(([name]) => name);
+}
+
 function explicitArchitectureRequest(working: string): boolean {
   return /\barchitect(?:ure|ural)?\b/.test(working);
 }
@@ -375,6 +398,7 @@ export function classify(input: ClassifierInput): ClassificationResult {
       frameworkContext,
       phpContext: false,
       questionForm: false,
+      promotedPatterns: [],
       reasonCodes,
     };
   }
@@ -445,6 +469,7 @@ export function classify(input: ClassifierInput): ClassificationResult {
 
   const questionForm =
     QUESTION_FORM.test(withoutExplicit) && !ACTION_VERB.test(withoutExplicit);
+  const promotedPatterns = promotedPatternsIn(withoutExplicit);
 
   const rawIntents = INTENT_PRIORITY.filter((intent) => scores[intent] >= 3);
   const gatingApplies =
@@ -525,6 +550,7 @@ export function classify(input: ClassifierInput): ClassificationResult {
     frameworkContext,
     phpContext: true,
     questionForm,
+    promotedPatterns,
     reasonCodes,
   };
 }

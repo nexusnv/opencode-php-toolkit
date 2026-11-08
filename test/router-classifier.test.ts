@@ -108,6 +108,39 @@ describe("classify", () => {
     expect(result.intents).toContain("Review");
   });
 
+  it("records promoted pattern names strongest first", () => {
+    const two = classify({
+      prompt: "Refactor to the Strategy pattern and add an adapter.",
+      ...base,
+    });
+    expect(two.promotedPatterns).toEqual(["strategy", "adapter"]);
+
+    const one = classify({ prompt: "Explain the Strategy pattern.", ...base });
+    expect(one.promotedPatterns).toEqual(["strategy"]);
+    expect(one.questionForm).toBe(true);
+
+    const generic = classify({ prompt: "Improve the design pattern usage.", ...base });
+    expect(generic.promotedPatterns).toEqual([]);
+  });
+
+  it("records state machine as a state-pattern signal", () => {
+    const result = classify({
+      prompt: "Refactor the switch into a state machine.",
+      ...base,
+    });
+    expect(result.promotedPatterns).toEqual(["state"]);
+  });
+
+  it("records no promoted patterns without PHP context", () => {
+    const result = classify({
+      prompt: "Use the strategy pattern in this TypeScript file.",
+      ...base,
+      files: [],
+    });
+    expect(result.phpContext).toBe(false);
+    expect(result.promotedPatterns).toEqual([]);
+  });
+
   it("notes framework context without treating it as PHP context", () => {
     const frameworkOnly = classify({
       prompt: "Add a Laravel controller.",

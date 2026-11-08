@@ -1,4 +1,4 @@
-import type { Concern, Intent, Target } from "./types.js";
+import type { Concern, Intent, PromotedPattern, Target } from "./types.js";
 
 export interface SignalEntry {
   id: string;
@@ -25,6 +25,26 @@ export const CONCERN_PRIORITY: readonly Concern[] = [
   "Design patterns",
   "Coding standards",
   "Dependencies",
+];
+
+export interface PatternNameSignal {
+  name: PromotedPattern;
+  term: string;
+  weight: 1 | 2 | 3;
+}
+
+// Bare names score 2; the explicit "<name> pattern" phrase scores 3.
+// "state machine" is a state-pattern signal because the corpus uses it.
+export const PATTERN_NAME_SIGNALS: readonly PatternNameSignal[] = [
+  { name: "strategy", term: "strategy pattern", weight: 3 },
+  { name: "strategy", term: "strategy", weight: 2 },
+  { name: "adapter", term: "adapter pattern", weight: 3 },
+  { name: "adapter", term: "adapter", weight: 2 },
+  { name: "decorator", term: "decorator pattern", weight: 3 },
+  { name: "decorator", term: "decorator", weight: 2 },
+  { name: "state", term: "state pattern", weight: 3 },
+  { name: "state", term: "state machine", weight: 2 },
+  { name: "state", term: "state", weight: 2 },
 ];
 
 export const INTENT_SIGNALS: readonly SignalEntry[] = [
