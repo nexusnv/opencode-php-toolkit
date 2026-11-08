@@ -861,7 +861,7 @@ npm pack --dry-run
 
 If the staging comparison reports changes, commit the rebuilt `dist/` with the source change.
 
-- [ ] **Step 3: Submit the stacked PR**
+- [x] **Step 3: Submit the stacked PR**
 
 ```bash
 gh stack submit --auto --open
