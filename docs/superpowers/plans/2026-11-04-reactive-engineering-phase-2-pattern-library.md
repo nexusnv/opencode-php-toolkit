@@ -1,6 +1,6 @@
 # Reactive Engineering Phase 2 Pattern Library Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Ship the Phase 2 pattern library and risk-based architecture behavior from `docs/superpowers/specs/2026-11-04-reactive-engineering-design.md`: a problem-first `php-design-patterns` index, four hidden P0 pattern skills, long-tail references, deterministic pattern selection, architecture guidance in the state part, and the full routing corpus.
 
@@ -64,7 +64,7 @@ Not included:
 - Modify: `src/routing/types.ts`
 - Modify: `src/routing/signals.ts`
 
-- [ ] **Step 1: Add the promoted pattern type and classification field**
+- [x] **Step 1: Add the promoted pattern type and classification field**
 
 In `src/routing/types.ts`, after `MaintainSubtype`:
 
@@ -80,7 +80,7 @@ Add to `ClassificationResult`:
   promotedPatterns: PromotedPattern[];
 ```
 
-- [ ] **Step 2: Add pattern-name signals**
+- [x] **Step 2: Add pattern-name signals**
 
 In `src/routing/signals.ts`, import `PromotedPattern` and add:
 
@@ -106,12 +106,12 @@ export const PATTERN_NAME_SIGNALS: readonly PatternNameSignal[] = [
 ];
 ```
 
-- [ ] **Step 3: Typecheck**
+- [x] **Step 3: Typecheck**
 
 Run: `npm run typecheck`
 Expected: failures only where `ClassificationResult` objects are missing `promotedPatterns`; Task 2 fixes them.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/routing/types.ts src/routing/signals.ts
@@ -127,7 +127,7 @@ git commit -m "feat: add promoted pattern names to routing types and signals"
 - Test: `test/router-classifier.test.ts`
 - Test: `test/routing-signals.test.ts`
 
-- [ ] **Step 1: Write failing classifier tests**
+- [x] **Step 1: Write failing classifier tests**
 
 Add to `test/router-classifier.test.ts`:
 
@@ -162,12 +162,12 @@ it("keeps promoted pattern signals at their required weight", () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `npm test -- test/router-classifier.test.ts test/routing-signals.test.ts`
 Expected: FAIL because `promotedPatterns` and `PATTERN_NAME_SIGNALS` do not exist.
 
-- [ ] **Step 3: Implement extraction**
+- [x] **Step 3: Implement extraction**
 
 In `src/routing/classifier.ts`, import `PATTERN_NAME_SIGNALS` and `PROMOTED_PATTERNS`, then add:
 
@@ -190,12 +190,12 @@ function promotedPatternsIn(working: string): PromotedPattern[] {
 
 Set `const promotedPatterns = phpContext ? promotedPatternsIn(withoutExplicit) : [];` and include `promotedPatterns` in both `ClassificationResult` returns (`[]` for no PHP context).
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `npm test -- test/router-classifier.test.ts test/routing-signals.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/routing/classifier.ts test/router-classifier.test.ts test/routing-signals.test.ts
@@ -210,7 +210,7 @@ git commit -m "feat: record promoted pattern names during classification"
 - Modify: `src/routing/catalog.ts`
 - Test: `test/router-selector.test.ts` (compile check)
 
-- [ ] **Step 1: Replace the catalog definition**
+- [x] **Step 1: Replace the catalog definition**
 
 ```ts
 import type { PromotedPattern, Target } from "./types.js";
@@ -258,12 +258,12 @@ export const PATTERN_CORE_BY_NAME: ReadonlyMap<PromotedPattern, CatalogEntry> = 
 );
 ```
 
-- [ ] **Step 2: Run typecheck**
+- [x] **Step 2: Run typecheck**
 
 Run: `npm run typecheck`
 Expected: PASS (catalog consumers still compile).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/routing/catalog.ts
@@ -279,7 +279,7 @@ git commit -m "feat: add pattern index and core entries to the routing catalog"
 - Modify: `src/routing/orchestrator.ts`
 - Test: `test/router-selector.test.ts`
 
-- [ ] **Step 1: Write failing selector tests**
+- [x] **Step 1: Write failing selector tests**
 
 Add to `test/router-selector.test.ts`:
 
@@ -384,12 +384,12 @@ it("falls back to the index for a P1 pattern name", () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `npm test -- test/router-selector.test.ts`
 Expected: FAIL: `promotedPatterns` is not accepted and pattern skills are never selected.
 
-- [ ] **Step 3: Implement pattern selection**
+- [x] **Step 3: Implement pattern selection**
 
 In `src/routing/selector.ts`:
 
@@ -453,12 +453,12 @@ In `src/routing/orchestrator.ts`, pass:
     promotedPatterns: current.promotedPatterns,
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `npm test -- test/router-selector.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/routing/selector.ts src/routing/orchestrator.ts test/router-selector.test.ts
@@ -474,7 +474,7 @@ git commit -m "feat: select index or core pattern skills deterministically"
 - Modify: `src/index.ts`
 - Test: `test/plugin-integration.test.ts`
 
-- [ ] **Step 1: Extend skill IDs and hidden set**
+- [x] **Step 1: Extend skill IDs and hidden set**
 
 In `src/content.ts`:
 
@@ -503,7 +503,7 @@ export const HIDDEN_SKILL_IDS: ReadonlySet<string> = new Set([
 ]);
 ```
 
-- [ ] **Step 2: Use the hidden set when registering**
+- [x] **Step 2: Use the hidden set when registering**
 
 In `src/index.ts`, import `HIDDEN_SKILL_IDS` and change:
 
@@ -511,7 +511,7 @@ In `src/index.ts`, import `HIDDEN_SKILL_IDS` and change:
 autoinvoke: !HIDDEN_SKILL_IDS.has(s.id),
 ```
 
-- [ ] **Step 3: Add integration coverage**
+- [x] **Step 3: Add integration coverage**
 
 In `test/plugin-integration.test.ts`:
 
@@ -539,12 +539,12 @@ it("registers core pattern skills as hidden and the index as advertised", async 
 });
 ```
 
-- [ ] **Step 4: Run the integration tests**
+- [x] **Step 4: Run the integration tests**
 
 Run: `npm test -- test/plugin-integration.test.ts`
 Expected: FAIL until the skill files exist (Task 6). Add the files first if needed.
 
-- [ ] **Step 5: Commit after Task 6**
+- [x] **Step 5: Commit after Task 6**
 
 ---
 
@@ -557,7 +557,7 @@ Expected: FAIL until the skill files exist (Task 6). Add the files first if need
 - Create: `skills/php-pattern-decorator/SKILL.md`
 - Create: `skills/php-pattern-state/SKILL.md`
 
-- [ ] **Step 1: Write the index skill**
+- [x] **Step 1: Write the index skill**
 
 `skills/php-design-patterns/SKILL.md` must contain frontmatter with a trigger-rich description, then:
 
@@ -567,7 +567,7 @@ Expected: FAIL until the skill files exist (Task 6). Add the files first if need
 - A list of reference files with one-line descriptions.
 - The pattern selection rule from spec §8.6.
 
-- [ ] **Step 2: Write the four core skills**
+- [x] **Step 2: Write the four core skills**
 
 Each core skill uses this shape:
 
@@ -591,12 +591,12 @@ description: <problem-first trigger description>. Use when <specific pain>.
 
 Include one short PHP 8.1+ code example per skill (readonly DTOs, enums, first-class callables where natural). Keep each under ~3,000 characters so two cores plus architecture fit the default budget.
 
-- [ ] **Step 3: Run the integration tests**
+- [x] **Step 3: Run the integration tests**
 
 Run: `npm test -- test/plugin-integration.test.ts`
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add skills/php-design-patterns/SKILL.md skills/php-pattern-*/SKILL.md src/content.ts src/index.ts test/plugin-integration.test.ts
@@ -612,7 +612,7 @@ git commit -m "feat: add the pattern index and hidden P0 core skills"
 - Create: `skills/php-design-patterns/references/ports-adapters.md`
 - Create: `skills/php-design-patterns/references/{command,composite,facade,proxy,chain-of-responsibility,specification,unit-of-work,cqrs,event-sourcing,ddd-tactical,anti-corruption-layer,strangler-fig,null-object,template-method,visitor,iterator,mediator,memento,flyweight,bridge,abstract-factory,prototype,singleton,object-pool,dependency-injection,enums-as-state,readonly-dto,named-constructors,first-class-callables,generators,attributes,traits-vs-composition}.md`
 
-- [ ] **Step 1: Use the mandatory reference template**
+- [x] **Step 1: Use the mandatory reference template**
 
 Every file must contain exactly these headings:
 
@@ -631,11 +631,11 @@ Every file must contain exactly these headings:
 
 The "When not to use" and "Testing" sections are mandatory and must be substantive, not one-liners. Each file ends with a short list of related references.
 
-- [ ] **Step 2: Keep the two Phase 2-specific references explicit**
+- [x] **Step 2: Keep the two Phase 2-specific references explicit**
 
 `repository.md` must state that a simple persistence service or DAO is often enough and that Repository is not promoted in P0. `ports-adapters.md` must distinguish the architectural boundary from the Adapter pattern and point back to `php-architecture`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add skills/php-design-patterns/references
@@ -650,7 +650,7 @@ git commit -m "docs: add long-tail pattern references"
 - Modify: `src/context/parts.ts`
 - Test: `test/context-parts.test.ts`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 In `test/context-parts.test.ts`, add cases asserting:
 
@@ -658,7 +658,7 @@ In `test/context-parts.test.ts`, add cases asserting:
 - `state.mode === "strict"` renders `Architecture: strict mode` and mentions a design note and approval.
 - `state.mode === "off"` does not render an `Architecture:` line.
 
-- [ ] **Step 2: Implement the guidance**
+- [x] **Step 2: Implement the guidance**
 
 In `renderToolkitStatePart`, after the `Task:` line:
 
@@ -672,12 +672,12 @@ In `renderToolkitStatePart`, after the `Task:` line:
   if (architecture) lines.push(architecture);
 ```
 
-- [ ] **Step 3: Run the tests**
+- [x] **Step 3: Run the tests**
 
 Run: `npm test -- test/context-parts.test.ts`
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/context/parts.ts test/context-parts.test.ts
@@ -691,7 +691,7 @@ git commit -m "feat: add risk-based architecture guidance to the state part"
 **Files:**
 - Create: `test/pattern-library.test.ts`
 
-- [ ] **Step 1: Write the validation test**
+- [x] **Step 1: Write the validation test**
 
 The test imports `CATALOG`, `PATTERN_CORE_BY_NAME`, `PATTERN_INDEX`, `HIDDEN_SKILL_IDS`, `SKILL_IDS` and reads the skill files from disk. It asserts:
 
@@ -735,12 +735,12 @@ it("does not promote Repository in P0", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test**
+- [x] **Step 2: Run the test**
 
 Run: `npm test -- test/pattern-library.test.ts`
 Expected: PASS after Tasks 6 and 7.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add test/pattern-library.test.ts
@@ -755,11 +755,11 @@ git commit -m "test: validate the pattern catalog and reference template"
 - Modify: `test/fixtures/routing-corpus.json`
 - Modify: `test/routing-corpus.test.ts`
 
-- [ ] **Step 1: Remove stale phase gating reasons**
+- [x] **Step 1: Remove stale phase gating reasons**
 
 For every case with `"enabledInPhase": 2`, keep the phase but delete `"reason": "pattern-library-not-shipped"`. Pattern cases are now assertable in Phase 2.
 
-- [ ] **Step 2: Update the corpus harness**
+- [x] **Step 2: Update the corpus harness**
 
 In `test/routing-corpus.test.ts`:
 
@@ -795,12 +795,12 @@ Change the loop to:
 for (const c of cases.filter((x) => x.enabledInPhase <= CURRENT_PHASE)) {
 ```
 
-- [ ] **Step 3: Run the corpus**
+- [x] **Step 3: Run the corpus**
 
 Run: `npm test -- test/routing-corpus.test.ts`
 Expected: PASS for all R01–R50. If a case fails, fix the signal/selection rule, not the expected set.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add test/fixtures/routing-corpus.json test/routing-corpus.test.ts
@@ -818,11 +818,11 @@ git commit -m "test: unlock the full routing corpus for phase 2"
 - Modify: `package-lock.json`
 - Modify: `src/config.ts`
 
-- [ ] **Step 1: Update README**
+- [x] **Step 1: Update README**
 
 Change the skills section to list the 13 shipped skills: the eight existing, the advertised `php-design-patterns` index, and the four hidden core pattern skills. Document the pattern routing rule: index by default, one core skill for one named promoted pattern, at most two cores for two names, comparisons use the index, at most two references are read on demand. Add a short note that Repository and Ports & Adapters are references, not promoted skills.
 
-- [ ] **Step 2: Update CHANGELOG and version**
+- [x] **Step 2: Update CHANGELOG and version**
 
 Add a `0.3.0` entry describing the pattern library, architecture modes, corpus unlock and hidden core skills. Run:
 
@@ -830,11 +830,11 @@ Add a `0.3.0` entry describing the pattern library, architecture modes, corpus u
 npm version 0.3.0 --no-git-tag-version
 ```
 
-- [ ] **Step 3: Update the config comment**
+- [x] **Step 3: Update the config comment**
 
 In `src/config.ts`, replace the Phase 1-only comment on `architectureMode` with a Phase 2 description: `risk` gives risk-based guidance, `strict` always asks for a design note, `off` disables the gate.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add README.md CHANGELOG.md package.json package-lock.json src/config.ts
@@ -845,7 +845,7 @@ git commit -m "docs: document the phase 2 pattern library and bump to 0.3.0"
 
 ### Task 12: Full verification
 
-- [ ] **Step 1: Run the shared gates**
+- [x] **Step 1: Run the shared gates**
 
 ```bash
 npm ci
@@ -857,7 +857,7 @@ node -e "import('./dist/index.js').then(m => { if (m.default.id !== 'php-toolkit
 npm pack --dry-run
 ```
 
-- [ ] **Step 2: Confirm dist is rebuilt and committed**
+- [x] **Step 2: Confirm dist is rebuilt and committed**
 
 If the staging comparison reports changes, commit the rebuilt `dist/` with the source change.
 
