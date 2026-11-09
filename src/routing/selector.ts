@@ -290,7 +290,9 @@ export function selectSkills(input: SelectorInput): SelectorResult {
     // Design is the one intent where the index is required below the normal
     // Patterns >= 2 gate; every other intent respects the threshold.
     if (!design && patternsScore < 2) return [];
-    if (promotedPatterns.length >= 2 && !actionable) {
+    // A comparison or knowledge question uses the index even when an agent
+    // default made the surrounding intent look actionable.
+    if (promotedPatterns.length >= 2 && (questionForm || !actionable)) {
       return [{ id: PATTERN_INDEX.id, reason: "pattern:index" }];
     }
 

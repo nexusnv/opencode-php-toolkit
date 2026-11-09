@@ -397,6 +397,25 @@ describe("selectSkills", () => {
     expect(result.selected).toEqual(["php-design-patterns"]);
   });
 
+  it("uses the index for a comparison question when an agent adds an actionable intent", () => {
+    const result = selectSkills({
+      prompt: "What is the difference between Strategy and Adapter?",
+      intents: ["Review"],
+      concerns: ["Design patterns"],
+      maintainSubtype: null,
+      questionForm: true,
+      explicit: [],
+      activated: new Set(),
+      unactivated: [],
+      config: { maxSkills: 3, maxSkillChars: 12000 },
+      contentLengths: patternLengths,
+      scores: { "Design patterns": 4, Review: 3 },
+      agentDefault: "Review",
+      promotedPatterns: ["strategy", "adapter"],
+    });
+    expect(result.selected).toEqual(["php-design-patterns"]);
+  });
+
   it("falls back to the index for a P1 pattern name", () => {
     const result = selectSkills({
       prompt: "Add a repository for the Order aggregate.",

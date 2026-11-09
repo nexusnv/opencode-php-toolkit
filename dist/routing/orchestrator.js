@@ -28,6 +28,9 @@ export async function runRouting(ctx, input, config, profileCache, sessions, con
         mode: config.architectureMode,
     });
     const state = loaded.state;
+    // Config is the source of truth for the architecture gate. A session saved
+    // under a different mode must render the current mode after a restart.
+    state.mode = config.architectureMode;
     const current = classify({
         prompt: input.text,
         files: input.files,

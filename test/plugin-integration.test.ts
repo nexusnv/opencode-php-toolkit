@@ -559,6 +559,31 @@ describe("plugin routing integration", () => {
     await cleanup();
   });
 
+  it("renders the current architecture mode when resuming a saved session", async () => {
+    const root = resolve("fixtures/php-app");
+    const state = createSessionState({
+      sessionID: "s1",
+      projectRoot: root,
+      projectSubpath: null,
+      mode: "risk",
+    });
+    const seed = { "php-toolkit:session:s1": serializeStorageState(state) };
+    const { fake, cleanup } = await setupPlugin({
+      storageSeed: seed,
+      options: { architectureMode: "off" },
+      agent: null,
+    });
+
+    await fake.triggerPromptHook(promptEvent("s1", "Add a new endpoint.", { files: phpFile }));
+    const context = { sessionID: "s1", system: [] as any[], messages: [] as any[] };
+    await fake.triggerContextHook(context);
+    const statePart = context.system.find(
+      (part: any) => part.metadata?.["php-toolkit"]?.kind === "state",
+    );
+    expect(statePart?.text).not.toContain("Architecture: risk mode");
+    await cleanup();
+  });
+
   it("does not hydrate a session whose persisted project scope no longer matches", async () => {
     const state = createSessionState({
       sessionID: "s1",
