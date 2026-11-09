@@ -4419,20 +4419,20 @@ The working tree must be clean, and the branch tip must contain the plan, source
 
 ### Acceptance checklist
 
-- [ ] `npm ci` clean.
-- [ ] `npm run typecheck` clean.
-- [ ] `npm test` green.
-- [ ] `npm run build` clean.
-- [ ] `git add -A -- dist && git diff --cached --exit-code -- dist` exits 0.
-- [ ] Plugin id smoke test passes.
-- [ ] `npm pack --dry-run` includes the verification build and reports `0.4.0`.
-- [ ] Changed scope never reports `passed` when the file list is indeterminate.
-- [ ] Production paths never reach the test runner.
-- [ ] Denied commands are cancelled and not spawned.
-- [ ] Deptrac only runs when configured; otherwise `skipped: scanner-unavailable`.
-- [ ] Build/Design/Test get the reminder; `verification: "off"` removes it.
-- [ ] `php_metrics` and `/php-toolkit-status` show verification runs.
-- [ ] Manual acceptance scenarios pass.
+- [x] `npm ci` clean.
+- [x] `npm run typecheck` clean.
+- [x] `npm test` green.
+- [x] `npm run build` clean.
+- [x] `git add -A -- dist && git diff --cached --exit-code -- dist` exits 0.
+- [x] Plugin id smoke test passes.
+- [x] `npm pack --dry-run` includes the verification build and reports `0.4.0`.
+- [x] Changed scope never reports `passed` when the file list is indeterminate.
+- [x] Production paths never reach the test runner.
+- [x] Denied commands are cancelled and not spawned.
+- [x] Deptrac only runs when configured; otherwise `skipped: scanner-unavailable`.
+- [x] Build/Design/Test get the reminder; `verification: "off"` removes it.
+- [x] `php_metrics` and `/php-toolkit-status` show verification runs.
+- [x] Manual acceptance scenarios pass.
 
 ---
 
