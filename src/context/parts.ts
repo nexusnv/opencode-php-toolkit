@@ -9,7 +9,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-export function renderToolkitStatePart(context: RoutingRenderContext): string {
+export function renderToolkitStatePart(
+  context: RoutingRenderContext,
+  options: { verification?: "remind" | "off" } = {},
+): string {
   const { profile, state } = context;
   const lines = ["PHP toolkit context"];
   const framework = profile.frameworkHints.filter((hint) => hint !== "none");
@@ -45,6 +48,16 @@ export function renderToolkitStatePart(context: RoutingRenderContext): string {
   lines.push(
     `Skills: selected=${selected}; attached=${attached}; activated=${activated}; pending: ${pendingText}`,
   );
+  const reminder =
+    options.verification !== "off" &&
+    state.activeIntents.some(
+      (intent) => intent === "Build" || intent === "Design" || intent === "Test",
+    );
+  if (reminder) {
+    lines.push(
+      "Before declaring completion: run php_verify (scope: changed), or explicitly report which checks are unavailable and why. Never claim a feature works without evidence.",
+    );
+  }
   return lines.join("\n");
 }
 

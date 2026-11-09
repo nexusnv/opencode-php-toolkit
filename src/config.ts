@@ -12,7 +12,7 @@ export interface ToolkitConfig {
   architectureScan: "tool" | "auto" | "off";
   // Reserved for later phases; Phase 1 is always silent.
   announceSelections: "on-change" | "always" | "off";
-  // Reserved for later phases; parsed but inert in Phase 1.
+  // Include the completion reminder for Build/Design/Test tasks.
   verification: "remind" | "off";
 }
 

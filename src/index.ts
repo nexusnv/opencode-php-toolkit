@@ -3,6 +3,8 @@ import { Plugin } from "@opencode/plugin";
 import { COMMAND_DEFS, HIDDEN_SKILL_IDS, SKILL_IDS, PKG_ROOT, loadText, parseFrontmatter } from "./content.js";
 import { detectPhpProject, formatDetection } from "./tools/detect.js";
 import { composerAudit, composerOutdated, composerValidate, phpLint, phpStaticAnalysis, phpTest, type ToolOutcome } from "./tools/php-tools.js";
+import { phpVerify, type VerifyInput } from "./verify/verify.js";
+import { VERIFICATION_CHECKS } from "./verify/types.js";
 import { MetricsRegistry, resolveProjectScope } from "./metrics/registry.js";
 import type { MetricsProject } from "./metrics/store.js";
 import { formatMetricsSnapshot } from "./metrics/format.js";
@@ -123,9 +125,12 @@ export default Plugin.define({
      */
     const tracked = <TInput>(
       name: string,
-      run: (input: TInput, context: { signal: AbortSignal }) => Promise<ToolOutcome>,
+      run: (
+        input: TInput,
+        context: { signal: AbortSignal; sessionID: string },
+      ) => Promise<ToolOutcome>,
     ) => {
-      return async (input: unknown, context: { signal: AbortSignal }) => {
+      return async (input: unknown, context: { signal: AbortSignal; sessionID: string }) => {
         const requested = (input as { directory?: unknown } | undefined)?.directory;
         const target =
           typeof requested === "string" && requested ? requested : undefined;
@@ -215,6 +220,11 @@ export default Plugin.define({
                     sessions,
                     renderContexts,
                     config,
+                    verificationFor: async (root) => {
+                      const store = metrics.storeFor(root);
+                      await store.init().catch(() => {});
+                      return store.getSnapshot().verification;
+                    },
                   });
                   await ctx.session.prompt({
                     sessionID,
@@ -355,6 +365,71 @@ export default Plugin.define({
             }),
           });
           editor.add({
+            name: "verify",
+            description:
+              "Run the project's own verification checks and return one report: lint, composer, tests, static analysis, style and architecture. Non-mutating: never installs dependencies, edits configuration or applies fixes; style checks are dry-run. scope=changed uses the host VCS working tree and maps production changes to tests; scope=all runs the full suite/analysis. Respects session command permissions; denied checks are reported as cancelled, never bypassed.",
+            input: {
+              type: "object",
+              properties: {
+                directory: { type: "string" },
+                scope: { type: "string", enum: ["changed", "all"], default: "changed" },
+                checks: {
+                  type: "array",
+                  items: { type: "string", enum: [...VERIFICATION_CHECKS] },
+                },
+                paths: { type: "array", items: { type: "string" } },
+              },
+              additionalProperties: false,
+            },
+            options: { namespace: "php" },
+            execute: tracked(
+              "php_verify",
+              async (input: VerifyInput, context) => {
+                let session = null;
+                try {
+                  session = await ctx.session.get({ sessionID: context.sessionID });
+                } catch (err) {
+                  console.warn(
+                    `[php-toolkit] could not resolve the session for php_verify: ${(err as Error).message}`,
+                  );
+                }
+                const sessionRoot = session?.location?.directory ?? dir;
+                const subpath = session?.subpath ?? null;
+                const report = await phpVerify(input, {
+                  sessionRoot,
+                  profileFor: (root) =>
+                    profileCache.resolve(root, root === sessionRoot ? subpath : null),
+                  vcsStatus: async (directory) => {
+                    const status = await ctx.vcs.status({ location: { directory } });
+                    return { data: status.data ?? [] };
+                  },
+                  permissionRules: session?.permissions ?? [],
+                  signal: context.signal,
+                });
+                const scope = resolveProjectScope(sessionRoot, input.directory);
+                try {
+                  await metrics.storeFor(scope).recordVerification({
+                    status: report.status,
+                    checks: report.checks,
+                    findings: report.findings,
+                  });
+                } catch (err) {
+                  // Metrics are optional; never fail a verification report over them.
+                  console.error(
+                    `[php-toolkit] verification metrics failed: ${(err as Error).message}`,
+                  );
+                }
+                // `tracked` records the tool outcome; a completed report is a
+                // successful run even when findings exist.
+                return {
+                  text: report.text,
+                  status: report.status === "error" ? "error" : "ok",
+                  findings: report.findings,
+                };
+              },
+            ),
+          });
+          editor.add({
             name: "metrics",
             description:
               "Show local PHP toolkit usage metrics for this project: tool runs, ok/error outcomes, issues surfaced, command usage, PHP prompt hits. Stored locally; the plugin sends no telemetry. Input: `reset: true` clears this project's metrics (replaces the document with an empty one, no undo); `export: true` returns the snapshot as raw JSON (without reset; with reset, the JSON is followed by the reset confirmation).",
@@ -468,7 +543,7 @@ export default Plugin.define({
           const render = renderContexts.get(event.sessionID);
           if (render && render.state.taskGeneration > 0) {
             try {
-              event.system.push(statePart(renderToolkitStatePart(render)));
+              event.system.push(statePart(renderToolkitStatePart(render, { verification: config.verification })));
             } catch (err) {
               console.error(`[php-toolkit] context render failed: ${(err as Error).message}`);
             }

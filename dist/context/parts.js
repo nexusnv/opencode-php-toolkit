@@ -2,7 +2,7 @@ import { L0_CONSTITUTION } from "../constitution.js";
 function isRecord(value) {
     return typeof value === "object" && value !== null;
 }
-export function renderToolkitStatePart(context) {
+export function renderToolkitStatePart(context, options = {}) {
     const { profile, state } = context;
     const lines = ["PHP toolkit context"];
     const framework = profile.frameworkHints.filter((hint) => hint !== "none");
@@ -28,6 +28,11 @@ export function renderToolkitStatePart(context) {
         .map((skill) => skill.id);
     const pendingText = pending.length ? pending.join(", ") : "none";
     lines.push(`Skills: selected=${selected}; attached=${attached}; activated=${activated}; pending: ${pendingText}`);
+    const reminder = options.verification !== "off" &&
+        state.activeIntents.some((intent) => intent === "Build" || intent === "Design" || intent === "Test");
+    if (reminder) {
+        lines.push("Before declaring completion: run php_verify (scope: changed), or explicitly report which checks are unavailable and why. Never claim a feature works without evidence.");
+    }
     return lines.join("\n");
 }
 export const PHP_TOOLKIT_PART = "php-toolkit";

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_TOOLKIT_CONFIG } from "../src/config.js";
 import { renderToolkitStatus } from "../src/status/toolkit-status.js";
 
 describe("renderToolkitStatus", () => {
@@ -37,7 +38,41 @@ describe("renderToolkitStatus", () => {
     expect(text).toContain("Selected: php-testing");
     expect(text).toContain("Dropped: php-security (budget:max-skills)");
     expect(text).toContain("Reasons: intent:build, concern:testing, budget:max-skills");
-    expect(text).toContain("Verify: unavailable (Phase 3)");
+    expect(text).toContain("Verify: not run yet");
+  });
+
+  it("shows the last verification run and aggregate status", () => {
+    const text = renderToolkitStatus({
+      profile: null,
+      state: null,
+      config: DEFAULT_TOOLKIT_CONFIG,
+      verification: {
+        runs: 2,
+        passed: 1,
+        failed: 1,
+        warning: 0,
+        skipped: 2,
+        partial: 0,
+        unavailable: 0,
+        error: 0,
+        timedOut: 0,
+        cancelled: 0,
+        findings: 3,
+        lastRunAt: "2026-11-08T05:31:00.000Z",
+        lastStatus: "failed",
+      },
+    });
+    expect(text).toContain("Verify: last run 2026-11-08 05:31Z — failed");
+    expect(text).toContain("2 run(s), 3 finding(s)");
+  });
+
+  it("says verification has not run yet", () => {
+    const text = renderToolkitStatus({
+      profile: null,
+      state: null,
+      config: DEFAULT_TOOLKIT_CONFIG,
+    });
+    expect(text).toContain("Verify: not run yet");
   });
 
   it("reports awaiting and denied skills only when present", () => {

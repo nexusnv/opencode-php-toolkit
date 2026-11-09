@@ -1,3 +1,4 @@
+import { formatTimestamp } from "../metrics/format.js";
 import { cacheSessionState, loadPersistedSessionState } from "../routing/persistence.js";
 import { createSessionState } from "../routing/state.js";
 function slug(target) {
@@ -51,6 +52,12 @@ function reasonsFor(state) {
     ];
     return [...new Set(reasons)];
 }
+function verificationLine(verification) {
+    if (!verification || verification.runs === 0 || !verification.lastRunAt) {
+        return "  Verify: not run yet";
+    }
+    return `  Verify: last run ${formatTimestamp(verification.lastRunAt)} — ${verification.lastStatus ?? "unknown"} (${verification.runs} run(s), ${verification.findings} finding(s))`;
+}
 export function renderToolkitStatus(input) {
     const { profile, state, config } = input;
     const lines = ["PHP toolkit status"];
@@ -90,7 +97,7 @@ export function renderToolkitStatus(input) {
         lines.push(`  Reasons: ${list(reasonsFor(state))}`);
     }
     lines.push(`  Mode: ${config.architectureMode} | scan: ${config.architectureScan} | announce: ${config.announceSelections}`);
-    lines.push("  Verify: unavailable (Phase 3)");
+    lines.push(verificationLine(input.verification));
     return lines.join("\n");
 }
 export async function buildCurrentStatusSnapshot(ctx, input) {
@@ -99,7 +106,12 @@ export async function buildCurrentStatusSnapshot(ctx, input) {
         .catch(() => null);
     const root = session?.location?.directory;
     if (!root) {
-        return renderToolkitStatus({ profile: null, state: null, config: input.config });
+        return renderToolkitStatus({
+            profile: null,
+            state: null,
+            config: input.config,
+            verification: null,
+        });
     }
     const subpath = session?.subpath ?? null;
     const profile = await input.profileCache.resolve(root, subpath);
@@ -128,6 +140,11 @@ export async function buildCurrentStatusSnapshot(ctx, input) {
             profile,
             mode: input.config.architectureMode,
         });
-    return renderToolkitStatus({ profile, state: view, config: input.config });
+    return renderToolkitStatus({
+        profile,
+        state: view,
+        config: input.config,
+        verification: (await input.verificationFor?.(root)) ?? null,
+    });
 }
 //# sourceMappingURL=toolkit-status.js.map

@@ -1,6 +1,6 @@
 import type { PhpToolkitMetrics, ToolMetricEntry } from "./store.js";
 
-function formatTimestamp(iso: string): string {
+export function formatTimestamp(iso: string): string {
   if (!iso) return "never";
   const parsed = new Date(iso);
   if (Number.isNaN(parsed.getTime())) return "unknown";

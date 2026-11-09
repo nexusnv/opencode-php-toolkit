@@ -1,4 +1,4 @@
-function formatTimestamp(iso) {
+export function formatTimestamp(iso) {
     if (!iso)
         return "never";
     const parsed = new Date(iso);
