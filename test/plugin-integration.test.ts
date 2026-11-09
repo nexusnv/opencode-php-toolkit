@@ -580,7 +580,8 @@ describe("plugin routing integration", () => {
     const statePart = context.system.find(
       (part: any) => part.metadata?.["php-toolkit"]?.kind === "state",
     );
-    expect(statePart?.text).not.toContain("Architecture: risk mode");
+    expect(statePart?.text).toContain("PHP toolkit context");
+    expect(statePart?.text).not.toContain("Architecture:");
     await cleanup();
   });
 

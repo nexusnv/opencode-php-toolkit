@@ -5,6 +5,7 @@ import { HIDDEN_SKILL_IDS, PKG_ROOT, SKILL_IDS } from "../src/content.js";
 import { CATALOG, PATTERN_CORE_BY_NAME, PATTERN_INDEX } from "../src/routing/catalog.js";
 
 const referenceDir = join(PKG_ROOT, "skills", "php-design-patterns", "references");
+const READONLY_CLASS = /^\s*(?:(?:final|abstract)\s+)?readonly\s+class\s/m;
 const REQUIRED_SECTIONS = [
   "## Problem",
   "## Forces",
@@ -59,12 +60,20 @@ describe("pattern library", () => {
     }
   });
 
+  it("rejects every form of readonly class as PHP 8.2", () => {
+    for (const form of [
+      "readonly class Example {}",
+      "final readonly class Example {}",
+      "abstract readonly class Example {}",
+    ]) {
+      expect(READONLY_CLASS.test(form), form).toBe(true);
+    }
+  });
+
   it("keeps every PHP example compatible with the advertised PHP 8.1 floor", () => {
     for (const file of markdownFiles(join(PKG_ROOT, "skills"))) {
       const text = readFileSync(file, "utf8");
-      expect(text, `${file} uses a PHP 8.2 readonly class`).not.toMatch(
-        /^\s*(?:final\s+)?readonly\s+class\s/m,
-      );
+      expect(READONLY_CLASS.test(text), `${file} uses a PHP 8.2 readonly class`).toBe(false);
     }
   });
 
