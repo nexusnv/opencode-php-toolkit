@@ -386,6 +386,7 @@ describe("selectSkills", () => {
       concerns: ["Design patterns"],
       maintainSubtype: null,
       questionForm: true,
+      comparison: true,
       explicit: [],
       activated: new Set(),
       unactivated: [],
@@ -404,6 +405,7 @@ describe("selectSkills", () => {
       concerns: ["Design patterns"],
       maintainSubtype: null,
       questionForm: true,
+      comparison: true,
       explicit: [],
       activated: new Set(),
       unactivated: [],
@@ -414,6 +416,47 @@ describe("selectSkills", () => {
       promotedPatterns: ["strategy", "adapter"],
     });
     expect(result.selected).toEqual(["php-design-patterns"]);
+  });
+
+  it("uses the index for an actionable comparison", () => {
+    const result = selectSkills({
+      prompt: "Compare Strategy and Adapter for a review.",
+      intents: ["Review"],
+      concerns: ["Design patterns"],
+      maintainSubtype: null,
+      questionForm: false,
+      comparison: true,
+      explicit: [],
+      activated: new Set(),
+      unactivated: [],
+      config: { maxSkills: 3, maxSkillChars: 12000 },
+      contentLengths: patternLengths,
+      scores: { "Design patterns": 4, Review: 3 },
+      promotedPatterns: ["strategy", "adapter"],
+    });
+    expect(result.selected).toContain("php-design-patterns");
+    expect(result.selected).not.toContain("php-pattern-strategy");
+    expect(result.selected).not.toContain("php-pattern-adapter");
+  });
+
+  it("attaches the core skills for an actionable how-to request", () => {
+    const result = selectSkills({
+      prompt:
+        "How do I put Strategy and Adapter in my PHP architecture? Please make those changes.",
+      intents: ["Design"],
+      concerns: ["Design patterns"],
+      maintainSubtype: null,
+      questionForm: true,
+      comparison: false,
+      explicit: [],
+      activated: new Set(),
+      unactivated: [],
+      config: { maxSkills: 3, maxSkillChars: 12000 },
+      contentLengths: patternLengths,
+      scores: { "Design patterns": 4, Design: 3 },
+      promotedPatterns: ["strategy", "adapter"],
+    });
+    expect(result.selected).toEqual(["php-pattern-strategy", "php-pattern-adapter"]);
   });
 
   it("falls back to the index for a P1 pattern name", () => {

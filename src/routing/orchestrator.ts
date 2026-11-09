@@ -125,6 +125,7 @@ export async function runRouting(
     concerns: withTask.activeConcerns,
     maintainSubtype: withTask.maintainSubtype,
     questionForm: current.questionForm,
+    comparison: current.comparison,
     explicit: input.skills,
     activated: withTask.activatedSkills,
     unactivated: withTask.unactivatedSkills,

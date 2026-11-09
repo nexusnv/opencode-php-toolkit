@@ -51,6 +51,7 @@ function selectForCorpus(c: CorpusCase): string[] {
     concerns: current.concerns,
     maintainSubtype: current.maintainSubtype,
     questionForm: current.questionForm,
+    comparison: current.comparison,
     explicit: [],
     activated: new Set<string>(),
     unactivated: [],

@@ -113,6 +113,11 @@ const AGENT_DEFAULTS: Record<string, Intent> = {
 };
 
 const QUESTION_FORM = /\b(what is|what are|how does|how do|why|compare|explain)\b/;
+// "Compare X and Y for a review" is a comparison even though the review verb
+// makes it non-question-form. Detect the comparison itself so pattern routing
+// does not depend on the surrounding question form.
+const COMPARISON_FORM =
+  /\b(?:compare|comparison|difference between|differences between|differ|versus|vs)\b/;
 // A question is only a knowledge question when it contains no actionable
 // build/design/debug/test/maintain verb. Keep this list in sync with the
 // intent dictionaries: nouns such as "architecture" or "pattern" do not
@@ -453,6 +458,7 @@ export function classify(input: ClassifierInput): ClassificationResult {
       frameworkContext,
       phpContext: false,
       questionForm: false,
+      comparison: false,
       promotedPatterns: [],
       reasonCodes,
     };
@@ -533,6 +539,7 @@ export function classify(input: ClassifierInput): ClassificationResult {
 
   const questionForm =
     QUESTION_FORM.test(withoutExplicit) && !ACTION_VERB.test(withoutExplicit);
+  const comparison = COMPARISON_FORM.test(withoutExplicit);
   const promotedPatterns = promotedPatternsIn(withoutExplicit);
 
   const rawIntents = INTENT_PRIORITY.filter((intent) => scores[intent] >= 3);
@@ -605,6 +612,7 @@ export function classify(input: ClassifierInput): ClassificationResult {
   reasonCodes.push(...reasons);
   for (const framework of frameworkContext) reasonCodes.push(`framework:${framework}`);
   if (questionForm) reasonCodes.push("question-form");
+  if (comparison) reasonCodes.push("comparison");
 
   return {
     intents,
@@ -614,6 +622,7 @@ export function classify(input: ClassifierInput): ClassificationResult {
     frameworkContext,
     phpContext: true,
     questionForm,
+    comparison,
     promotedPatterns,
     reasonCodes,
   };

@@ -61,6 +61,30 @@ describe("classify", () => {
     expect(knowledge.questionForm).toBe(true);
   });
 
+  it("detects comparisons independently of question form", () => {
+    const knowledge = classify({
+      prompt: "What is the difference between Strategy and Adapter?",
+      ...base,
+    });
+    expect(knowledge.questionForm).toBe(true);
+    expect(knowledge.comparison).toBe(true);
+
+    const actionable = classify({
+      prompt: "Compare Strategy and Adapter for a review.",
+      ...base,
+    });
+    expect(actionable.questionForm).toBe(false);
+    expect(actionable.comparison).toBe(true);
+
+    const implementation = classify({
+      prompt:
+        "How do I put Strategy and Adapter in my PHP architecture? Please make those changes.",
+      ...base,
+    });
+    expect(implementation.questionForm).toBe(true);
+    expect(implementation.comparison).toBe(false);
+  });
+
   it("treats an active PHP agent as an explicit PHP-context signal", () => {
     const result = classify({
       prompt: "Review this component.",
