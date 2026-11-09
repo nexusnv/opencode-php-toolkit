@@ -73,6 +73,7 @@ export async function runRouting(ctx, input, config, profileCache, sessions, con
         concerns: withTask.activeConcerns,
         maintainSubtype: withTask.maintainSubtype,
         questionForm: current.questionForm,
+        comparison: current.comparison,
         explicit: input.skills,
         activated: withTask.activatedSkills,
         unactivated: withTask.unactivatedSkills,

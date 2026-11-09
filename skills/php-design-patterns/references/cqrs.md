@@ -36,9 +36,18 @@ final class OrderSummaryQuery
     /** @return list<OrderSummary> */
     public function forCustomer(CustomerId $id): array
     {
-        return $this->db->fetchAllAssociative(
+        $rows = $this->db->fetchAllAssociative(
             'SELECT id, total, status FROM order_summary WHERE customer_id = ?',
             [$id->value],
+        );
+
+        return array_map(
+            static fn (array $row): OrderSummary => new OrderSummary(
+                id: (string) $row['id'],
+                total: (int) $row['total'],
+                status: (string) $row['status'],
+            ),
+            $rows,
         );
     }
 }

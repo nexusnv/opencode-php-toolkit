@@ -22,6 +22,8 @@ export interface ClassificationResult {
     frameworkContext: string[];
     phpContext: boolean;
     questionForm: boolean;
+    /** Comparison language, independent of question form. */
+    comparison: boolean;
     /** Promoted pattern names found in the prompt, strongest first. */
     promotedPatterns: PromotedPattern[];
     reasonCodes: string[];

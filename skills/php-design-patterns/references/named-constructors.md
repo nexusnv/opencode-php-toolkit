@@ -16,6 +16,9 @@ Constructors with several parameters are ambiguous, and callers can create inval
 ```php
 final class Money
 {
+    /** Minor-unit exponent for the currencies this example supports. */
+    private const MINOR_UNIT_EXPONENT = ['EUR' => 2, 'USD' => 2, 'JPY' => 0, 'KWD' => 3];
+
     private function __construct(
         public readonly int $minor,
         public readonly string $currency,
@@ -23,8 +26,8 @@ final class Money
         if ($minor < 0) {
             throw new InvalidArgumentException('Money cannot be negative.');
         }
-        if (preg_match('/^[A-Z]{3}$/', $currency) !== 1) {
-            throw new InvalidArgumentException('Currency must be an ISO 4217 code.');
+        if (!isset(self::MINOR_UNIT_EXPONENT[$currency])) {
+            throw new InvalidArgumentException('Unsupported currency.');
         }
     }
 
@@ -35,18 +38,27 @@ final class Money
 
     public static function fromDecimal(string $amount, string $currency): self
     {
-        if (preg_match('/^(0|[1-9]\d*)(?:\.(\d{1,2}))?$/', $amount, $matches) !== 1) {
+        $exponent = self::MINOR_UNIT_EXPONENT[$currency] ?? null;
+        if ($exponent === null) {
+            throw new InvalidArgumentException('Unsupported currency.');
+        }
+
+        $fraction = $exponent === 0 ? '' : '(?:\.(\d{1,' . $exponent . '}))?';
+        if (preg_match('/^(0|[1-9]\d*)' . $fraction . '$/', $amount, $matches) !== 1) {
             throw new InvalidArgumentException(
-                'Amount must be a non-negative decimal with at most two fraction digits.',
+                $exponent === 0
+                    ? 'Amount must be a whole number for this currency.'
+                    : sprintf('Amount must have at most %d fraction digits.', $exponent),
             );
         }
 
         $whole = filter_var($matches[1], FILTER_VALIDATE_INT);
-        if ($whole === false || $whole > intdiv(PHP_INT_MAX - 99, 100)) {
+        $scale = 10 ** $exponent;
+        if ($whole === false || $whole > intdiv(PHP_INT_MAX - ($scale - 1), $scale)) {
             throw new InvalidArgumentException('Amount is outside the supported range.');
         }
 
-        $minor = $whole * 100 + (int) str_pad($matches[2] ?? '', 2, '0');
+        $minor = $whole * $scale + (int) str_pad($matches[2] ?? '', $exponent, '0');
 
         return new self($minor, $currency);
     }

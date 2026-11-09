@@ -5,6 +5,8 @@ export interface SelectorInput {
     concerns: Concern[];
     maintainSubtype: MaintainSubtype | null;
     questionForm: boolean;
+    /** Explicit comparison language, independent of question form. */
+    comparison?: boolean;
     explicit: ReadonlyArray<{
         id: string;
     }>;

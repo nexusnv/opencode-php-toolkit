@@ -54,11 +54,20 @@ final class ConnectionPool
         $this->live += 1;
         try {
             $connection = ($this->factory)();
+            if (!$connection instanceof Connection) {
+                throw new UnexpectedValueException('Factory must return a Connection.');
+            }
+            if ($this->checkedOut->contains($connection)) {
+                throw new LogicException('Factory returned a checked-out connection.');
+            }
+            if (!$connection->isValid()) {
+                throw new RuntimeException('Factory returned an invalid connection.');
+            }
+            $this->checkedOut->attach($connection);
         } catch (Throwable $e) {
             $this->live -= 1;
             throw $e;
         }
-        $this->checkedOut->attach($connection);
 
         return $connection;
     }

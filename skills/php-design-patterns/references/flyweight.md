@@ -24,7 +24,12 @@ final class GlyphPool
     /** @var array<string, Glyph> */
     private array $pool = [];
 
-    public function __construct(private readonly int $max = 256) {}
+    public function __construct(private readonly int $max = 256)
+    {
+        if ($max < 1) {
+            throw new InvalidArgumentException('Pool size must be positive.');
+        }
+    }
 
     public function get(string $shape): Glyph
     {

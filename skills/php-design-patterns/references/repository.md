@@ -39,6 +39,17 @@ final class DoctrineOrderRepository implements OrderRepository
 
 Keep the interface collection-like and small. Do not expose query builders.
 
+`save()` only schedules the aggregate; it does not flush. The application
+boundary must flush the same `EntityManagerInterface` instance before the
+transaction commits:
+
+```php
+$orders->save($order);
+$entityManager->flush();
+```
+
+Without that flush, a later read from another process will not find the order.
+
 ## Trade-offs
 
 One interface per aggregate. Generic repositories blur aggregate boundaries. In-memory implementations can drift from real query semantics.

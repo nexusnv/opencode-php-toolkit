@@ -37,7 +37,7 @@ function contentLength(contentLengths, id) {
  * concern priority, then the remaining budget.
  */
 export function selectSkills(input) {
-    const { prompt, intents, concerns, maintainSubtype, questionForm, explicit, activated, unactivated, config, contentLengths, available, denied, scores, agentDefault, promotedPatterns = [], } = input;
+    const { prompt, intents, concerns, maintainSubtype, questionForm, comparison = false, explicit, activated, unactivated, config, contentLengths, available, denied, scores, agentDefault, promotedPatterns = [], } = input;
     const normalized = stripCodeFences(normalizePrompt(prompt)).replace(/@[a-z0-9-]+/g, " ");
     const featureScale = matchesAny(normalized, FEATURE_SCALE_TERMS);
     const broadReview = matchesAny(normalized, BROAD_REVIEW_TERMS);
@@ -213,9 +213,10 @@ export function selectSkills(input) {
         // Patterns >= 2 gate; every other intent respects the threshold.
         if (!design && patternsScore < 2)
             return [];
-        // A comparison or knowledge question uses the index even when an agent
-        // default made the surrounding intent look actionable.
-        if (promotedPatterns.length >= 2 && (questionForm || !actionable)) {
+        // Comparisons use the index regardless of question form. A non-comparison
+        // question that still carries an actionable intent (for example a how-to
+        // request with "please make those changes") selects the core skills.
+        if (promotedPatterns.length >= 2 && (comparison || !actionable)) {
             return [{ id: PATTERN_INDEX.id, reason: "pattern:index" }];
         }
         const wanted = promotedPatterns.slice(0, actionable ? 2 : 1);

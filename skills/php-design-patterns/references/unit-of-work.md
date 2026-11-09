@@ -37,7 +37,7 @@ final class OrderPlacement
             // Both writes use the connection owned by the unit of work, so
             // they join the same transaction.
             $this->uow->register($order);
-            $this->orders->add($order);
+            $this->orders->save($order);
             $this->inventory->reserve($order);
             $this->uow->commit();
         } catch (Throwable $e) {

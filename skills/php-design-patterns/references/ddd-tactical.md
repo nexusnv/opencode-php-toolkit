@@ -16,20 +16,26 @@ Domain rules are scattered across services and controllers, and aggregates have 
 ```php
 final class Money
 {
+    /** Minor-unit exponent for the currencies this example supports. */
+    private const MINOR_UNIT_EXPONENT = ['EUR' => 2, 'USD' => 2, 'JPY' => 0, 'KWD' => 3];
+
     public function __construct(public readonly int $minor, public readonly string $currency)
     {
         if ($minor < 0) throw new InvalidArgumentException('Money cannot be negative.');
-        if (preg_match('/^[A-Z]{3}$/', $currency) !== 1) {
-            throw new InvalidArgumentException('Currency must be an ISO 4217 code.');
+        if (!isset(self::MINOR_UNIT_EXPONENT[$currency])) {
+            throw new InvalidArgumentException('Unsupported currency.');
         }
+    }
+
+    public function minorUnitExponent(): int
+    {
+        return self::MINOR_UNIT_EXPONENT[$this->currency];
     }
 }
 
 final class Order
 {
-    // Example policy: reject orders below 1.00 in their currency.
-    private const MINIMUM_TOTAL_MINOR = 100;
-
+    // Example policy: reject orders below one major unit in their currency.
     private OrderStatus $status = OrderStatus::Draft;
 
     /** @param list<Money> $lines */
@@ -49,17 +55,21 @@ final class Order
 
     private function assertMinimumTotal(): void
     {
-        $currency = null;
+        if ($this->lines === []) {
+            throw new DomainException('Order must have at least one line.');
+        }
+
+        $currency = $this->lines[0]->currency;
         $minor = 0;
         foreach ($this->lines as $line) {
-            $currency ??= $line->currency;
             if ($line->currency !== $currency) {
                 throw new InvalidArgumentException('All lines must use the same currency.');
             }
             $minor += $line->minor;
         }
 
-        if ($minor < self::MINIMUM_TOTAL_MINOR) {
+        $minimumMinor = 10 ** $this->lines[0]->minorUnitExponent();
+        if ($minor < $minimumMinor) {
             throw new DomainException('Order total is below the minimum.');
         }
     }
