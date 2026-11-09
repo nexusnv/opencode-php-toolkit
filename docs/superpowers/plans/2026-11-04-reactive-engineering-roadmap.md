@@ -53,8 +53,8 @@ Current plans:
 | Plan | Status | Path |
 | --- | --- | --- |
 | Phase 1 — Foundation | Created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-1-foundation.md` |
-| Phase 2 — Pattern Library and Architecture Behavior | Not created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-2-pattern-library.md` |
-| Phase 3 — Verification | Not created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-3-verification.md` |
+| Phase 2 — Pattern Library and Architecture Behavior | Created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-2-pattern-library.md` |
+| Phase 3 — Verification | Created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-3-verification.md` |
 | Phase 4 — Architect Surface and Diagnostics | Not created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-4-architect-surface.md` |
 | Phase 5 — Architecture Scanner | Not created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-5-scanner.md` |
 | Phase 6 — Drift Detection and Feedback | Deferred | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-6-drift.md` |

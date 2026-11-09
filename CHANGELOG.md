@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-11-09
+
+### Added
+
+- `php_verify`: one deterministic report across lint, composer, tests, static analysis, style and architecture.
+- VCS-derived changed scope through the host API, path overrides, production-to-test mapping and full-suite fallback.
+- Command/shell permission-aware execution: denied or approval-required commands are cancelled, never bypassed.
+- Build/Design/Test completion reminder, gated by `verification`.
+- Verification metrics and `/php-toolkit-status` verification line.
+
+### Changed
+
+- `php_lint`, `composerValidate`, `php_static_analysis` and `php_test` accept an injected command runner and explicit paths internally; their registered tool inputs are unchanged.
+- `VerificationMetrics` gains `lastStatus`; older documents migrate with `null`.
+
+### Fixed
+
+- Missing tooling is reported as `unavailable` instead of a silent skip; an empty changed list is `partial`, never `passed`.
+
 ## [0.3.0] - 2026-11-08
 
 ### Added

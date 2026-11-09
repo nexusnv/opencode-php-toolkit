@@ -88,8 +88,22 @@ opencode plugin add file:///home/leonidas/dev/nexusnv/opencode-php-toolkit
   - `php_composer_outdated` — direct deps with a newer version (network; the repositories configured in the project's `composer.json` determine which hosts Composer contacts)
   - `php_static_analysis` — PHPStan (or Psalm when absent), JSON output; analysis errors count as findings; **executes project-configured code** (analyzer binaries run bootstrap files, autoload and Psalm plugins with this session's privileges)
   - `php_test` — runs `vendor/bin/pest` or `vendor/bin/phpunit` against JUnit output; **executes project code** (tests only, 300s timeout, never a bare PATH binary)
+  - `php_verify` — one normalized report for lint, composer, tests, static analysis, style and architecture; VCS-derived changed scope and test mapping; **executes project-configured tools** under session command permissions; never installs, edits or fixes
   - `php_metrics` — local usage metrics; `reset: true` clears this project's metrics, `export: true` dumps the snapshot as raw JSON (absolute project path omitted)
 - Hooks: `prompt` runs deterministic routing for PHP-context prompts, `context` adds the stable L0 engineering constitution plus one compact routing-state part, `tool.execute.before` warns on destructive `composer update` / `rector process` without `--dry-run` / `php-cs-fixer fix` without `--dry-run`.
+
+## Verification tool (`php_verify`)
+
+`php_verify` runs the checks the project actually has and returns one report.
+It is on demand: it never blocks a response and never runs automatically.
+
+- Checks: `lint`, `composer`, `tests`, `static`, `style`, `architecture`.
+- `scope: "changed"` (default) uses the host VCS working tree (staged, unstaged and untracked files); `scope: "all"` runs the full suite/analysis.
+- `paths` overrides the changed-file set for `lint`, `static` and `style` regardless of scope. Production paths are never passed to the test runner.
+- Changed production files map to `{ClassName}Test.php` under the test roots; a missing mapping, an unmapped PHP change or a deleted source file runs the full suite and labels the check `tests:full-suite-fallback`.
+- Missing tools and configuration are reported as `unavailable`; intentionally skipped work is `skipped` with a reason code. The aggregate is `passed` only when every requested check passed, and `partial` for mixed/skipped/warning/timed-out/cancelled results.
+- The tool never installs dependencies, edits configuration or applies fixes. Style checks are dry-run. Tests and static analysis execute project code, so they inherit the host's permission model; denied or approval-gated commands are reported as cancelled and never bypassed.
+- `verification: "off"` removes the Build/Design/Test completion reminder; the tool remains available.
 
 ## Reactive routing (0.3.0)
 
@@ -133,7 +147,7 @@ PHP toolkit status
   Dropped: php-standards (budget:max-skills)
   Reasons: intent:build, concern:testing, concern:security, budget:max-skills
   Mode: risk | scan: off | announce: off
-  Verify: unavailable (Phase 3)
+  Verify: last run 2026-11-08 05:31Z — failed (2 run(s), 3 finding(s))
 ```
 
 `selected` is what the classifier chose, `attached` is what was merged into the
@@ -150,7 +164,8 @@ drop reasons only — never prompt text.
       "maxSkills": 3,
       "maxSkillChars": 12000,
       "architectureMode": "risk",
-      "announceSelections": "off"
+      "announceSelections": "off",
+      "verification": "remind"
     }
   }]
 }
@@ -161,10 +176,11 @@ Escape hatches:
 - `autoSkills: "hint"` records recommendations without attaching them.
 - `autoSkills: "off"` restores passive behavior; the L0 constitution remains active.
 - `architectureMode: "off"` disables design gating.
+- `verification: "off"` removes the completion reminder for Build/Design/Test tasks.
 - `maxSkillChars` is capped at 16,000.
-- `architectureScan`, `announceSelections` and `verification` are reserved for
-  later phases; Phase 1 parses them but they have no effect. Routing is always
-  silent by default.
+- `architectureScan` and `announceSelections` are reserved for later phases;
+  the plugin parses them but they have no effect. Routing is always silent by
+  default.
 
 ## Local metrics
 
@@ -188,6 +204,11 @@ PHP toolkit metrics (local-only, never leaves this machine)
     generations 3   continuations 1   resets 1
     most selected   php-testing (4), php-security (2)
     activations     3                 dropped 1
+
+  Verification
+    runs 3   passed 1   failed 1   partial 1
+    checks: warning 2   skipped 2   timed out 0   cancelled 0
+    findings 5   last 2026-10-21 09:20Z (failed)
 
   Impact: 2 issues surfaced by the toolkit in this project.
 ```
@@ -292,6 +313,7 @@ src/hooks/php-context.ts — PHP triggers and destructive-pattern guard
 src/metrics/store.ts — per-project metrics v3 document (storage, migration, merged writes)
 src/metrics/registry.ts — one document per project, work attributed to the right one
 src/metrics/format.ts — snapshot rendering
+src/verify/ — php_verify orchestration: check adapters, changed scope, test mapping, permissions, report and metrics types
 agents/php-*.md, commands/php-*.md, skills/php-*/SKILL.md
 fixtures/php-sample/ — minimal PSR-4 app for smoke tests
 test/ — vitest suite (metrics store, registry, snapshot format, tool outcomes)
