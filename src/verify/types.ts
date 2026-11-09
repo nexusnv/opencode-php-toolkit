@@ -32,6 +32,7 @@ export const REASONS = {
   changedScopeUnavailable: "changed-scope-unavailable",
   scannerUnavailable: "scanner-unavailable",
   fullSuiteFallback: "tests:full-suite-fallback",
+  testsSkipped: "tests:skipped",
   noTestReport: "no-test-report",
   permissionDenied: "permission:denied",
   approvalRequired: "permission:approval-required",

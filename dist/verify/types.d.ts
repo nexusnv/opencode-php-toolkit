@@ -13,6 +13,7 @@ export declare const REASONS: {
     readonly changedScopeUnavailable: "changed-scope-unavailable";
     readonly scannerUnavailable: "scanner-unavailable";
     readonly fullSuiteFallback: "tests:full-suite-fallback";
+    readonly testsSkipped: "tests:skipped";
     readonly noTestReport: "no-test-report";
     readonly permissionDenied: "permission:denied";
     readonly approvalRequired: "permission:approval-required";

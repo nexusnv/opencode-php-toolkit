@@ -1,6 +1,13 @@
+import { access } from "node:fs/promises";
 import type { ProjectProfile } from "../../profile.js";
 import type { ToolOutcome } from "../../tools/php-tools.js";
-import type { CommandRunner } from "../../tools/runner.js";
+import {
+  PERMISSION_APPROVAL_CODE,
+  PERMISSION_DENIED_CODE,
+  isMissingBinary,
+  type CommandRunner,
+  type RunResult,
+} from "../../tools/runner.js";
 import type { ChangedScope } from "../changed.js";
 import {
   REASONS,
@@ -69,6 +76,33 @@ export const cancelled = (
 
 export const timedOut = (check: VerificationCheck, summary: string): CheckResult =>
   result(check, "timed_out", REASONS.timeout, summary);
+
+export async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Maps raw runner failures (style/architecture spawn directly). */
+export function runFailure(
+  check: VerificationCheck,
+  result: RunResult,
+  missingSummary: string,
+): CheckResult | null {
+  if (result.aborted) return cancelled(check, REASONS.aborted, "interrupted by AbortSignal");
+  if (result.killed) return timedOut(check, "exceeded the check timeout");
+  if (result.code === PERMISSION_DENIED_CODE) {
+    return cancelled(check, REASONS.permissionDenied, "command denied by session permissions");
+  }
+  if (result.code === PERMISSION_APPROVAL_CODE) {
+    return cancelled(check, REASONS.approvalRequired, "command requires approval");
+  }
+  if (isMissingBinary(result)) return unavailable(check, REASONS.notInstalled, missingSummary);
+  return null;
+}
 
 function firstLine(text: string): string {
   const line = text.split("\n").find((candidate) => candidate.trim().length > 0) ?? "check could not run";
