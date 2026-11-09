@@ -1,15 +1,4 @@
-function globMatches(pattern, value) {
-    let source = "";
-    for (const char of pattern) {
-        if (char === "*")
-            source += ".*";
-        else if (char === "?")
-            source += ".";
-        else
-            source += char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    }
-    return new RegExp(`^${source}$`).test(value);
-}
+import { globMatches } from "../util/glob.js";
 /**
  * Interprets the session's effective skill permissions. The last matching
  * rule wins, matching OpenCode's own rule ordering. Absence of a rule is not

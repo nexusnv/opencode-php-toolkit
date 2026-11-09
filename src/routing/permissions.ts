@@ -1,3 +1,4 @@
+import { globMatches } from "../util/glob.js";
 import type { SelectorResult } from "./selector.js";
 import type { SkillUnactivatedStatus } from "./types.js";
 
@@ -8,16 +9,6 @@ export interface PermissionRule {
 }
 
 export type EffectivePermission = "pending" | "awaiting-approval" | "denied";
-
-function globMatches(pattern: string, value: string): boolean {
-  let source = "";
-  for (const char of pattern) {
-    if (char === "*") source += ".*";
-    else if (char === "?") source += ".";
-    else source += char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  }
-  return new RegExp(`^${source}$`).test(value);
-}
 
 /**
  * Interprets the session's effective skill permissions. The last matching
