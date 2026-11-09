@@ -16,7 +16,7 @@ Published package (after `npm publish`):
 // opencode.jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["opencode-php-toolkit@0.2.0"]
+  "plugins": ["opencode-php-toolkit@0.1.1"]
 }
 ```
 
@@ -34,7 +34,7 @@ as-is; always run `npm run build` before committing):
 # Latest on main
 opencode plugin add github:nexusnv/opencode-php-toolkit
 # Pinned (recommended for teams)
-opencode plugin add github:nexusnv/opencode-php-toolkit#v0.2.0
+opencode plugin add github:nexusnv/opencode-php-toolkit#v0.1.1
 ```
 
 Or per-project in `opencode.jsonc` (same spec forms, plus branch/commit):
@@ -42,9 +42,9 @@ Or per-project in `opencode.jsonc` (same spec forms, plus branch/commit):
 ```jsonc
 {
   "plugins": [
-    "github:nexusnv/opencode-php-toolkit#v0.2.0",
+    "github:nexusnv/opencode-php-toolkit#v0.1.1",
     "github:nexusnv/opencode-php-toolkit#main",
-    "git+ssh://git@github.com/nexusnv/opencode-php-toolkit.git#6eb66d4"
+    "git+ssh://git@github.com/nexusnv/opencode-php-toolkit.git#89a8211"
   ]
 }
 ```
@@ -300,10 +300,12 @@ MIT — NexusNV.
 ## Releasing
 
 1. `npm run build` (commits fresh `dist/` — required for git installs).
-2. Bump `version` in `package.json`, commit, tag `vX.Y.Z`, push all three.
-3. `npm publish --no-provenance` (local publishes can't attest; use a
+2. Bump `version` in `package.json` and update the README install pins (npm
+   version, git tag and commit example) to the new release.
+3. Commit, tag `vX.Y.Z`, push all three.
+4. `npm publish --no-provenance` (local publishes can't attest; use a
    Trusted Publishing workflow instead if you want provenance).
-4. Fresh versions take a few minutes to appear (staged `0.0.0-stage`
+5. Fresh versions take a few minutes to appear (staged `0.0.0-stage`
    placeholder first). Machines with `min-release-age` in `~/.npmrc` won't
    `plugin add` them until that age passes — allow `0` temporarily to
    verify, then restore.
