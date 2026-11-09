@@ -16,9 +16,9 @@ Read and write models have different shapes and performance needs, and one model
 Start with command/query separation in code, not infrastructure:
 
 ```php
-final readonly class PlaceOrderHandler
+final class PlaceOrderHandler
 {
-    public function __construct(private OrderRepository $orders) {}
+    public function __construct(private readonly OrderRepository $orders) {}
 
     public function __invoke(PlaceOrder $command): OrderId
     {
@@ -29,9 +29,9 @@ final readonly class PlaceOrderHandler
     }
 }
 
-final readonly class OrderSummaryQuery
+final class OrderSummaryQuery
 {
-    public function __construct(private Connection $db) {}
+    public function __construct(private readonly Connection $db) {}
 
     /** @return list<OrderSummary> */
     public function forCustomer(CustomerId $id): array

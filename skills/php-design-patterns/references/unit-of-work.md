@@ -16,24 +16,34 @@ Several aggregates must be persisted atomically, and infrastructure code keeps c
 ```php
 interface UnitOfWork
 {
+    public function begin(): void;
     public function register(object $entity): void;
     public function commit(): void;
     public function rollback(): void;
 }
 
-final readonly class OrderPlacement
+final class OrderPlacement
 {
     public function __construct(
-        private OrderRepository $orders,
-        private Inventory $inventory,
-        private UnitOfWork $uow,
+        private readonly OrderRepository $orders,
+        private readonly Inventory $inventory,
+        private readonly UnitOfWork $uow,
     ) {}
 
     public function place(Order $order): void
     {
-        $this->orders->add($order);
-        $this->inventory->reserve($order);
-        $this->uow->commit();
+        $this->uow->begin();
+        try {
+            // Both writes use the connection owned by the unit of work, so
+            // they join the same transaction.
+            $this->uow->register($order);
+            $this->orders->add($order);
+            $this->inventory->reserve($order);
+            $this->uow->commit();
+        } catch (Throwable $e) {
+            $this->uow->rollback();
+            throw $e;
+        }
     }
 }
 ```

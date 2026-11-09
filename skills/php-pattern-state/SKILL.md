@@ -45,7 +45,7 @@ interface OrderState
     public function ship(Order $order): OrderState;
 }
 
-final readonly class Paid implements OrderState
+final class Paid implements OrderState
 {
     public function pay(Order $order): OrderState
     {

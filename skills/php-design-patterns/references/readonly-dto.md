@@ -14,18 +14,18 @@ Data crosses layers as arrays with implicit keys, causing typos and missing vali
 ## Solution (PHP 8.1+)
 
 ```php
-final readonly class CustomerDto
+final class CustomerDto
 {
     /** @param list<AddressDto> $addresses */
     public function __construct(
-        public string $id,
-        public string $email,
-        public array $addresses = [],
+        public readonly string $id,
+        public readonly string $email,
+        public readonly array $addresses = [],
     ) {}
 }
 ```
 
-Use `readonly` classes for transport objects. Keep them free of behavior and persistence logic. Use value objects when validation matters.
+Use `readonly` properties for transport objects. Keep them free of behavior and persistence logic. Use value objects when validation matters.
 
 ## Trade-offs
 
@@ -43,7 +43,7 @@ Test mapping from source and to output. Test nullable and empty collections. Add
 
 ## Refactoring path
 
-1. Extract the array shape into a readonly class.
+1. Extract the array shape into a class with readonly properties.
 2. Type and promote the fields.
 3. Update call sites and mappers.
 4. Add boundary validation.

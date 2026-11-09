@@ -14,12 +14,19 @@ Constructors with several parameters are ambiguous, and callers can create inval
 ## Solution (PHP 8.1+)
 
 ```php
-final readonly class Money
+final class Money
 {
     private function __construct(
-        public int $minor,
-        public string $currency,
-    ) {}
+        public readonly int $minor,
+        public readonly string $currency,
+    ) {
+        if ($minor < 0) {
+            throw new InvalidArgumentException('Money cannot be negative.');
+        }
+        if (preg_match('/^[A-Z]{3}$/', $currency) !== 1) {
+            throw new InvalidArgumentException('Currency must be an ISO 4217 code.');
+        }
+    }
 
     public static function eur(int $minor): self
     {
@@ -28,7 +35,20 @@ final readonly class Money
 
     public static function fromDecimal(string $amount, string $currency): self
     {
-        return new self((int) round((float) $amount * 100), $currency);
+        if (preg_match('/^(0|[1-9]\d*)(?:\.(\d{1,2}))?$/', $amount, $matches) !== 1) {
+            throw new InvalidArgumentException(
+                'Amount must be a non-negative decimal with at most two fraction digits.',
+            );
+        }
+
+        $whole = filter_var($matches[1], FILTER_VALIDATE_INT);
+        if ($whole === false || $whole > intdiv(PHP_INT_MAX - 99, 100)) {
+            throw new InvalidArgumentException('Amount is outside the supported range.');
+        }
+
+        $minor = $whole * 100 + (int) str_pad($matches[2] ?? '', 2, '0');
+
+        return new self($minor, $currency);
     }
 }
 ```

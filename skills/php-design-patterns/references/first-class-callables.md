@@ -14,10 +14,10 @@ A single pure function varies, but a full strategy interface and class are too m
 ## Solution (PHP 8.1+)
 
 ```php
-final readonly class PriceCalculator
+final class PriceCalculator
 {
     /** @param Closure(Money): Money $discount */
-    public function __construct(private Closure $discount) {}
+    public function __construct(private readonly Closure $discount) {}
 
     public function total(Money $subtotal): Money
     {

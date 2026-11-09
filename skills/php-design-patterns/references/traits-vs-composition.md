@@ -18,9 +18,9 @@ Prefer composition:
 ```php
 interface Clock { public function now(): DateTimeImmutable; }
 
-final readonly class Timestamped
+final class Timestamped
 {
-    public function __construct(private Clock $clock) {}
+    public function __construct(private readonly Clock $clock) {}
 
     public function stamp(): string
     {

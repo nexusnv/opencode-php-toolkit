@@ -25,11 +25,11 @@ interface ExchangeRateProvider
     public function rate(Currency $from, Currency $to): Rate;
 }
 
-final readonly class CachedRates implements ExchangeRateProvider
+final class CachedRates implements ExchangeRateProvider
 {
     public function __construct(
-        private ExchangeRateProvider $inner,
-        private Cache $cache,
+        private readonly ExchangeRateProvider $inner,
+        private readonly Cache $cache,
     ) {}
 
     public function rate(Currency $from, Currency $to): Rate

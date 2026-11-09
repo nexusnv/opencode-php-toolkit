@@ -14,12 +14,12 @@ Many components communicate directly, creating a dense web of dependencies and h
 ## Solution (PHP 8.1+)
 
 ```php
-final readonly class CheckoutMediator
+final class CheckoutMediator
 {
     public function __construct(
-        private Inventory $inventory,
-        private Payments $payments,
-        private Shipping $shipping,
+        private readonly Inventory $inventory,
+        private readonly Payments $payments,
+        private readonly Shipping $shipping,
     ) {}
 
     public function checkout(Cart $cart): CheckoutResult

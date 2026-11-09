@@ -19,7 +19,7 @@ interface Formatter
     public function format(ReportData $data): string;
 }
 
-final readonly class HtmlFormatter implements Formatter { /* ... */ }
+final class HtmlFormatter implements Formatter { /* ... */ }
 
 abstract class Report
 {

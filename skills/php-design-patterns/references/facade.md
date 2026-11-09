@@ -14,13 +14,13 @@ Callers must orchestrate many subsystem classes for one use case, and that orche
 ## Solution (PHP 8.1+)
 
 ```php
-final readonly class InvoiceService
+final class InvoiceService
 {
     public function __construct(
-        private InvoiceRepository $invoices,
-        private TaxCalculator $tax,
-        private PdfRenderer $pdf,
-        private Mailer $mailer,
+        private readonly InvoiceRepository $invoices,
+        private readonly TaxCalculator $tax,
+        private readonly PdfRenderer $pdf,
+        private readonly Mailer $mailer,
     ) {}
 
     public function send(InvoiceId $id): void

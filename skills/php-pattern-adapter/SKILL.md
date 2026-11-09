@@ -26,9 +26,9 @@ interface PaymentGateway
     public function charge(string $reference, Money $amount): PaymentResult;
 }
 
-final readonly class StripeGateway implements PaymentGateway
+final class StripeGateway implements PaymentGateway
 {
-    public function __construct(private StripeClient $stripe) {}
+    public function __construct(private readonly StripeClient $stripe) {}
 
     public function charge(string $reference, Money $amount): PaymentResult
     {

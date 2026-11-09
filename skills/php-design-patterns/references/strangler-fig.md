@@ -21,12 +21,12 @@ interface InvoiceExporter
     public function export(Invoice $invoice): string;
 }
 
-final readonly class MigratingExporter implements InvoiceExporter
+final class MigratingExporter implements InvoiceExporter
 {
     public function __construct(
-        private InvoiceExporter $legacy,
-        private InvoiceExporter $replacement,
-        private FeatureFlags $flags,
+        private readonly InvoiceExporter $legacy,
+        private readonly InvoiceExporter $replacement,
+        private readonly FeatureFlags $flags,
     ) {}
 
     public function export(Invoice $invoice): string

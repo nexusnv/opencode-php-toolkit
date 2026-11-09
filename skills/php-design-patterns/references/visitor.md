@@ -19,9 +19,9 @@ interface Node
     public function accept(NodeVisitor $visitor): mixed;
 }
 
-final readonly class NumberNode implements Node
+final class NumberNode implements Node
 {
-    public function __construct(public int $value) {}
+    public function __construct(public readonly int $value) {}
 
     public function accept(NodeVisitor $visitor): mixed
     {

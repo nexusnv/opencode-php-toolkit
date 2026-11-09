@@ -19,9 +19,9 @@ interface CustomerDirectory
     public function findByEmail(Email $email): ?Customer;
 }
 
-final readonly class LegacyCustomerDirectory implements CustomerDirectory
+final class LegacyCustomerDirectory implements CustomerDirectory
 {
-    public function __construct(private LegacySoapClient $legacy) {}
+    public function __construct(private readonly LegacySoapClient $legacy) {}
 
     public function findByEmail(Email $email): ?Customer
     {

@@ -19,9 +19,9 @@ interface ApprovalHandler
     public function handle(Expense $expense): ApprovalResult;
 }
 
-final readonly class ManagerApproval implements ApprovalHandler
+final class ManagerApproval implements ApprovalHandler
 {
-    public function __construct(private ?ApprovalHandler $next = null) {}
+    public function __construct(private readonly ?ApprovalHandler $next = null) {}
 
     public function handle(Expense $expense): ApprovalResult
     {

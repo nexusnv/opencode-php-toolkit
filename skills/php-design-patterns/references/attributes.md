@@ -15,13 +15,13 @@ Metadata such as routes, validation or ORM mapping is expressed in comments or p
 
 ```php
 #[Attribute(Attribute::TARGET_CLASS)]
-final readonly class Route
+final class Route
 {
-    public function __construct(public string $path) {}
+    public function __construct(public readonly string $path) {}
 }
 
 #[Route('/invoices')]
-final readonly class InvoiceController
+final class InvoiceController
 {
     // ...
 }

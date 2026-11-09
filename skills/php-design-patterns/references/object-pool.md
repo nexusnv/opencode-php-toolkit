@@ -19,18 +19,66 @@ final class ConnectionPool
     /** @var list<Connection> */
     private array $idle = [];
 
-    public function __construct(private int $max, private Closure $factory) {}
+    /** @var SplObjectStorage<Connection, null> */
+    private SplObjectStorage $checkedOut;
+
+    /** Number of connections this pool created and has not discarded. */
+    private int $live = 0;
+
+    public function __construct(
+        private readonly int $max,
+        private readonly Closure $factory,
+    ) {
+        $this->checkedOut = new SplObjectStorage();
+    }
 
     public function acquire(): Connection
     {
-        return array_pop($this->idle) ?? ($this->factory)();
+        while ($connection = array_pop($this->idle)) {
+            try {
+                if ($connection->isValid()) {
+                    $this->checkedOut->attach($connection);
+
+                    return $connection;
+                }
+            } catch (Throwable) {
+                // Fall through and discard the broken connection.
+            }
+            $this->live -= 1;
+        }
+
+        if ($this->live >= $this->max) {
+            throw new RuntimeException('Connection pool exhausted.');
+        }
+
+        $this->live += 1;
+        try {
+            $connection = ($this->factory)();
+        } catch (Throwable $e) {
+            $this->live -= 1;
+            throw $e;
+        }
+        $this->checkedOut->attach($connection);
+
+        return $connection;
     }
 
     public function release(Connection $connection): void
     {
-        if (count($this->idle) < $this->max) {
-            $this->idle[] = $connection;
+        if (!$this->checkedOut->contains($connection)) {
+            throw new LogicException('Connection was not acquired from this pool.');
         }
+        $this->checkedOut->detach($connection);
+
+        try {
+            $connection->reset();
+        } catch (Throwable) {
+            $this->live -= 1;
+
+            return;
+        }
+
+        $this->idle[] = $connection;
     }
 }
 ```

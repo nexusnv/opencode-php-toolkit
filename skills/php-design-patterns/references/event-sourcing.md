@@ -14,13 +14,13 @@ The history of changes matters more than the current state, or audit and replay 
 ## Solution (PHP 8.1+)
 
 ```php
-final readonly class OrderPlaced
+final class OrderPlaced
 {
     public function __construct(
-        public OrderId $orderId,
-        public CustomerId $customerId,
-        public Money $total,
-        public DateTimeImmutable $occurredAt,
+        public readonly OrderId $orderId,
+        public readonly CustomerId $customerId,
+        public readonly Money $total,
+        public readonly DateTimeImmutable $occurredAt,
     ) {}
 }
 
@@ -42,7 +42,13 @@ final class Order
     {
         if ($event instanceof OrderPlaced) {
             $this->status = OrderStatus::Placed;
+
+            return;
         }
+
+        throw new InvalidArgumentException(
+            sprintf('Unsupported event %s.', $event::class),
+        );
     }
 }
 ```

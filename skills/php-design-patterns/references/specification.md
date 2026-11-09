@@ -19,9 +19,9 @@ interface Specification
     public function isSatisfiedBy(Order $order): bool;
 }
 
-final readonly class OverLimit implements Specification
+final class OverLimit implements Specification
 {
-    public function __construct(private Money $limit) {}
+    public function __construct(private readonly Money $limit) {}
 
     public function isSatisfiedBy(Order $order): bool
     {
@@ -29,11 +29,11 @@ final readonly class OverLimit implements Specification
     }
 }
 
-final readonly class AndSpecification implements Specification
+final class AndSpecification implements Specification
 {
     public function __construct(
-        private Specification $left,
-        private Specification $right,
+        private readonly Specification $left,
+        private readonly Specification $right,
     ) {}
 
     public function isSatisfiedBy(Order $order): bool

@@ -20,9 +20,9 @@ interface FileStoreFactory
     public function reader(): FileReader;
 }
 
-final readonly class S3StoreFactory implements FileStoreFactory
+final class S3StoreFactory implements FileStoreFactory
 {
-    public function __construct(private S3Client $client) {}
+    public function __construct(private readonly S3Client $client) {}
 
     public function writer(): FileWriter { return new S3Writer($this->client); }
     public function reader(): FileReader { return new S3Reader($this->client); }

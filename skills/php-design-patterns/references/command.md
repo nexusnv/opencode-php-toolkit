@@ -14,18 +14,18 @@ A user action or queued operation needs to be represented as a value so it can b
 ## Solution (PHP 8.1+)
 
 ```php
-final readonly class RefundPayment
+final class RefundPayment
 {
     public function __construct(
-        public PaymentId $paymentId,
-        public Money $amount,
-        public string $reason,
+        public readonly PaymentId $paymentId,
+        public readonly Money $amount,
+        public readonly string $reason,
     ) {}
 }
 
-final readonly class RefundPaymentHandler
+final class RefundPaymentHandler
 {
-    public function __construct(private PaymentGateway $gateway) {}
+    public function __construct(private readonly PaymentGateway $gateway) {}
 
     public function __invoke(RefundPayment $command): RefundResult
     {

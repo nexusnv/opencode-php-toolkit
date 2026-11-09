@@ -16,9 +16,9 @@ Code needs one shared instance, often for configuration, logging or a database c
 Prefer constructor injection:
 
 ```php
-final readonly class Config
+final class Config
 {
-    public function __construct(private array $values) {}
+    public function __construct(private readonly array $values) {}
 
     public function get(string $key): mixed
     {

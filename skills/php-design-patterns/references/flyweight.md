@@ -14,9 +14,9 @@ A large number of similar objects consumes too much memory because intrinsic dat
 ## Solution (PHP 8.1+)
 
 ```php
-final readonly class Glyph
+final class Glyph
 {
-    public function __construct(public string $shape) {}
+    public function __construct(public readonly string $shape) {}
 }
 
 final class GlyphPool
@@ -24,9 +24,21 @@ final class GlyphPool
     /** @var array<string, Glyph> */
     private array $pool = [];
 
+    public function __construct(private readonly int $max = 256) {}
+
     public function get(string $shape): Glyph
     {
-        return $this->pool[$shape] ??= new Glyph($shape);
+        if (isset($this->pool[$shape])) {
+            return $this->pool[$shape];
+        }
+
+        if (count($this->pool) >= $this->max) {
+            // Evict the oldest entry. A later request for that shape creates a
+            // fresh instance instead of reusing the evicted one.
+            array_shift($this->pool);
+        }
+
+        return $this->pool[$shape] = new Glyph($shape);
     }
 }
 ```

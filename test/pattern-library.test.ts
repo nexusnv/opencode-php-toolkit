@@ -20,6 +20,16 @@ function readSkill(id: string): string {
   return readFileSync(join(PKG_ROOT, "skills", id, "SKILL.md"), "utf8");
 }
 
+function markdownFiles(root: string): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) files.push(...markdownFiles(path));
+    else if (entry.name.endsWith(".md")) files.push(path);
+  }
+  return files;
+}
+
 describe("pattern library", () => {
   it("maps every skill ID to a catalog entry and a markdown file", () => {
     const catalogIDs = new Set(CATALOG.map((entry) => entry.id));
@@ -46,6 +56,15 @@ describe("pattern library", () => {
       for (const section of REQUIRED_SECTIONS) {
         expect(text, `${file} missing ${section}`).toContain(section);
       }
+    }
+  });
+
+  it("keeps every PHP example compatible with the advertised PHP 8.1 floor", () => {
+    for (const file of markdownFiles(join(PKG_ROOT, "skills"))) {
+      const text = readFileSync(file, "utf8");
+      expect(text, `${file} uses a PHP 8.2 readonly class`).not.toMatch(
+        /^\s*(?:final\s+)?readonly\s+class\s/m,
+      );
     }
   });
 

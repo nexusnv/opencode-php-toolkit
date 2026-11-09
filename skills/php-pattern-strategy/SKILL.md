@@ -25,9 +25,9 @@ interface ShippingCost
     public function for(Order $order): Money;
 }
 
-final readonly class FlatRateShipping implements ShippingCost
+final class FlatRateShipping implements ShippingCost
 {
-    public function __construct(private Money $rate) {}
+    public function __construct(private readonly Money $rate) {}
 
     public function for(Order $order): Money
     {
@@ -35,9 +35,9 @@ final readonly class FlatRateShipping implements ShippingCost
     }
 }
 
-final readonly class WeightBasedShipping implements ShippingCost
+final class WeightBasedShipping implements ShippingCost
 {
-    public function __construct(private WeightTable $table) {}
+    public function __construct(private readonly WeightTable $table) {}
 
     public function for(Order $order): Money
     {
@@ -45,9 +45,9 @@ final readonly class WeightBasedShipping implements ShippingCost
     }
 }
 
-final readonly class Checkout
+final class Checkout
 {
-    public function __construct(private ShippingCost $shipping) {}
+    public function __construct(private readonly ShippingCost $shipping) {}
 
     public function total(Order $order): Money
     {

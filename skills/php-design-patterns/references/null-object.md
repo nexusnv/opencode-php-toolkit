@@ -19,7 +19,7 @@ interface AuditLog
     public function record(AuditEvent $event): void;
 }
 
-final readonly class NullAuditLog implements AuditLog
+final class NullAuditLog implements AuditLog
 {
     public function record(AuditEvent $event): void
     {

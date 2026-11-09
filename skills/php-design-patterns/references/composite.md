@@ -19,17 +19,17 @@ interface PriceComponent
     public function total(): Money;
 }
 
-final readonly class LineItem implements PriceComponent
+final class LineItem implements PriceComponent
 {
-    public function __construct(private Money $price) {}
+    public function __construct(private readonly Money $price) {}
 
     public function total(): Money { return $this->price; }
 }
 
-final readonly class Bundle implements PriceComponent
+final class Bundle implements PriceComponent
 {
     /** @param list<PriceComponent> $parts */
-    public function __construct(private array $parts) {}
+    public function __construct(private readonly array $parts) {}
 
     public function total(): Money
     {

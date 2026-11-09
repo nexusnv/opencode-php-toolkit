@@ -18,16 +18,16 @@ Define driving ports (use-case interfaces) and driven ports (repository, gateway
 ```php
 interface Clock { public function now(): DateTimeImmutable; }
 
-final readonly class SystemClock implements Clock
+final class SystemClock implements Clock
 {
     public function now(): DateTimeImmutable { return new DateTimeImmutable(); }
 }
 
-final readonly class PlaceOrder
+final class PlaceOrder
 {
     public function __construct(
-        private OrderRepository $orders,
-        private Clock $clock,
+        private readonly OrderRepository $orders,
+        private readonly Clock $clock,
     ) {}
 
     public function __invoke(PlaceOrderCommand $command): OrderId

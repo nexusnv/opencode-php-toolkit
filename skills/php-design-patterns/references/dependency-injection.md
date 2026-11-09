@@ -14,11 +14,11 @@ Classes create their own collaborators, making dependencies hidden and tests slo
 ## Solution (PHP 8.1+)
 
 ```php
-final readonly class ReportService
+final class ReportService
 {
     public function __construct(
-        private ReportRepository $reports,
-        private Clock $clock,
+        private readonly ReportRepository $reports,
+        private readonly Clock $clock,
     ) {}
 
     public function build(ReportId $id): Report

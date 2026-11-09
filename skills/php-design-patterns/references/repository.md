@@ -20,9 +20,9 @@ interface OrderRepository
     public function save(Order $order): void;
 }
 
-final readonly class DoctrineOrderRepository implements OrderRepository
+final class DoctrineOrderRepository implements OrderRepository
 {
-    public function __construct(private EntityManagerInterface $em) {}
+    public function __construct(private readonly EntityManagerInterface $em) {}
 
     public function get(OrderId $id): Order
     {

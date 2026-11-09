@@ -14,9 +14,9 @@ An object must support undo or restore without exposing its internal state.
 ## Solution (PHP 8.1+)
 
 ```php
-final readonly class EditorMemento
+final class EditorMemento
 {
-    public function __construct(private string $content, private int $cursor) {}
+    public function __construct(private readonly string $content, private readonly int $cursor) {}
 
     public function restoreInto(Editor $editor): void
     {
