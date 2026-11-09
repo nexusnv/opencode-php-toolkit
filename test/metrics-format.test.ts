@@ -35,6 +35,7 @@ function metrics(overrides: Partial<PhpToolkitMetrics> = {}): PhpToolkitMetrics 
       cancelled: 0,
       findings: 0,
       lastRunAt: null,
+      lastStatus: null,
     },
     scanner: {
       runs: 0,
@@ -54,6 +55,28 @@ function scan(overrides: Partial<ProjectScan> = {}): ProjectScan {
 }
 
 describe("formatMetricsSnapshot", () => {
+  it("summarizes verification runs and the last aggregate status", () => {
+    const out = formatMetricsSnapshot(
+      metrics({
+        verification: {
+          ...metrics().verification,
+          runs: 3,
+          passed: 1,
+          failed: 1,
+          partial: 1,
+          skipped: 2,
+          findings: 5,
+          lastRunAt: "2026-10-21T09:20:00.000Z",
+          lastStatus: "failed",
+        },
+      }),
+    );
+    expect(out).toContain("runs 3");
+    expect(out).toContain("skipped 2");
+    expect(out).toContain("findings 5");
+    expect(out).toContain("(failed)");
+  });
+
   it("names the project so the snapshot is about the right codebase", () => {
     const out = formatMetricsSnapshot(metrics());
     expect(out).toContain("my-app");

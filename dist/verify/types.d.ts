@@ -41,3 +41,4 @@ export interface VerificationReport {
     text: string;
 }
 export declare function isVerificationCheck(value: unknown): value is VerificationCheck;
+export declare function isAggregateStatus(value: unknown): value is AggregateStatus;

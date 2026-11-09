@@ -35,4 +35,11 @@ export const REASONS = {
 export function isVerificationCheck(value) {
     return typeof value === "string" && VERIFICATION_CHECKS.includes(value);
 }
+export function isAggregateStatus(value) {
+    return (value === "passed" ||
+        value === "failed" ||
+        value === "partial" ||
+        value === "unavailable" ||
+        value === "error");
+}
 //# sourceMappingURL=types.js.map

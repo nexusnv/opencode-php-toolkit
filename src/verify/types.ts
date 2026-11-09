@@ -65,3 +65,13 @@ export interface VerificationReport {
 export function isVerificationCheck(value: unknown): value is VerificationCheck {
   return typeof value === "string" && (VERIFICATION_CHECKS as readonly string[]).includes(value);
 }
+
+export function isAggregateStatus(value: unknown): value is AggregateStatus {
+  return (
+    value === "passed" ||
+    value === "failed" ||
+    value === "partial" ||
+    value === "unavailable" ||
+    value === "error"
+  );
+}

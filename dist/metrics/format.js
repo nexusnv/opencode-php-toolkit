@@ -36,6 +36,16 @@ function commandLines(metrics) {
     const width = Math.max(...entries.map(([name]) => name.length));
     return entries.map(([name, entry]) => `    ${pad(name, width)}  ${plural(entry.count, "invocation")}  last ${formatTimestamp(entry.lastUsedAt)}`);
 }
+function verificationLines(metrics) {
+    const verification = metrics.verification;
+    if (verification.runs === 0)
+        return ["    (no verification has run yet)"];
+    return [
+        `    runs ${verification.runs}   passed ${verification.passed}   failed ${verification.failed}   partial ${verification.partial}`,
+        `    checks: warning ${verification.warning}   skipped ${verification.skipped}   timed out ${verification.timedOut}   cancelled ${verification.cancelled}`,
+        `    findings ${verification.findings}   last ${formatTimestamp(verification.lastRunAt ?? "")} (${verification.lastStatus ?? "unknown"})`,
+    ];
+}
 function routingLines(metrics) {
     const routing = metrics.routing;
     const mostSelected = Object.entries(routing.selections)
@@ -106,6 +116,9 @@ export function formatMetricsSnapshot(m, scan) {
         "",
         "  Routing",
         ...routingLines(m),
+        "",
+        "  Verification",
+        ...verificationLines(m),
         "",
         `  Impact: ${plural(findings, "issue")} surfaced by the toolkit in this project.`,
     ];

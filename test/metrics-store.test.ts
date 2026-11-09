@@ -5,6 +5,7 @@ import {
   applyRoutingEvent,
   deserialize,
   emptyRoutingMetrics,
+  emptyVerificationMetrics,
   mergeDelta,
   mergeRoutingMetrics,
   projectKey,
@@ -618,6 +619,7 @@ describe("mergeDelta", () => {
       commands: {},
       triggerHits: 1,
       routing: emptyRoutingMetrics(),
+      verification: emptyVerificationMetrics(),
     });
 
     const merged = mergeDelta(delta({ runs: 1, ok: 1, status: "ok" }), delta({ runs: 2, ok: 0, status: "error" }));
@@ -631,6 +633,7 @@ describe("mergeDelta", () => {
       commands: {},
       triggerHits: 0,
       routing: emptyRoutingMetrics(),
+      verification: emptyVerificationMetrics(),
     } satisfies MetricsDelta;
     applyRoutingEvent(first.routing, { kind: "selected", skill: "php-testing" }, "2026-01-01T00:00:00.000Z");
     applyRoutingEvent(first.routing, { kind: "task-generation" }, "2026-01-01T00:00:00.000Z");
@@ -641,6 +644,7 @@ describe("mergeDelta", () => {
       commands: {},
       triggerHits: 0,
       routing: emptyRoutingMetrics(),
+      verification: emptyVerificationMetrics(),
     } satisfies MetricsDelta;
     applyRoutingEvent(second.routing, { kind: "activated", skill: "php-testing" }, "2026-01-02T00:00:00.000Z");
     applyRoutingEvent(second.routing, { kind: "task-generation" }, "2026-01-02T00:00:00.000Z");

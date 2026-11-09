@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isAggregateStatus, type AggregateStatus, type CheckResult } from "../verify/types.js";
 
 /**
  * Outcome of a single tool invocation.
@@ -58,6 +59,8 @@ export interface VerificationMetrics {
   cancelled: number;
   findings: number;
   lastRunAt: string | null;
+  /** Aggregate status of the most recent run; null when never run. */
+  lastStatus: AggregateStatus | null;
 }
 
 export interface ScannerMetrics {
@@ -150,6 +153,7 @@ export function emptyVerificationMetrics(): VerificationMetrics {
     cancelled: 0,
     findings: 0,
     lastRunAt: null,
+    lastStatus: null,
   };
 }
 
@@ -339,6 +343,7 @@ function migrateVerification(raw: unknown): VerificationMetrics {
     result[key] = nonNegative(num(candidate[key]));
   }
   result.lastRunAt = typeof candidate.lastRunAt === "string" ? candidate.lastRunAt : null;
+  result.lastStatus = isAggregateStatus(candidate.lastStatus) ? candidate.lastStatus : null;
   return result;
 }
 
@@ -401,10 +406,17 @@ export type MetricsDelta = {
   commands: Record<string, { count: number; lastUsedAt: string }>;
   triggerHits: number;
   routing: RoutingMetrics;
+  verification: VerificationMetrics;
 };
 
 function emptyDelta(): MetricsDelta {
-  return { tools: {}, commands: {}, triggerHits: 0, routing: emptyRoutingMetrics() };
+  return {
+    tools: {},
+    commands: {},
+    triggerHits: 0,
+    routing: emptyRoutingMetrics(),
+    verification: emptyVerificationMetrics(),
+  };
 }
 
 function isEmptyRouting(routing: RoutingMetrics): boolean {
@@ -421,12 +433,31 @@ function isEmptyRouting(routing: RoutingMetrics): boolean {
   );
 }
 
+function isEmptyVerification(verification: VerificationMetrics): boolean {
+  return (
+    verification.runs === 0 &&
+    verification.passed === 0 &&
+    verification.failed === 0 &&
+    verification.partial === 0 &&
+    verification.unavailable === 0 &&
+    verification.error === 0 &&
+    verification.warning === 0 &&
+    verification.skipped === 0 &&
+    verification.timedOut === 0 &&
+    verification.cancelled === 0 &&
+    verification.findings === 0 &&
+    verification.lastRunAt === null &&
+    verification.lastStatus === null
+  );
+}
+
 function isEmptyDelta(delta: MetricsDelta): boolean {
   return (
     delta.triggerHits === 0 &&
     Object.keys(delta.tools).length === 0 &&
     Object.keys(delta.commands).length === 0 &&
-    isEmptyRouting(delta.routing)
+    isEmptyRouting(delta.routing) &&
+    isEmptyVerification(delta.verification)
   );
 }
 
@@ -577,6 +608,26 @@ export function mergeDelta(a: MetricsDelta, b: MetricsDelta): MetricsDelta {
     commands,
     triggerHits: a.triggerHits + b.triggerHits,
     routing: mergeRoutingMetrics(a.routing, b.routing),
+    verification: mergeVerification(a.verification, b.verification),
+  };
+}
+
+function mergeVerification(a: VerificationMetrics, b: VerificationMetrics): VerificationMetrics {
+  const laterRun = (a.lastRunAt ?? "") > (b.lastRunAt ?? "") ? a : b;
+  return {
+    runs: a.runs + b.runs,
+    passed: a.passed + b.passed,
+    failed: a.failed + b.failed,
+    partial: a.partial + b.partial,
+    unavailable: a.unavailable + b.unavailable,
+    error: a.error + b.error,
+    warning: a.warning + b.warning,
+    skipped: a.skipped + b.skipped,
+    timedOut: a.timedOut + b.timedOut,
+    cancelled: a.cancelled + b.cancelled,
+    findings: a.findings + b.findings,
+    lastRunAt: laterRun.lastRunAt,
+    lastStatus: laterRun.lastStatus,
   };
 }
 
@@ -621,6 +672,10 @@ function applyDelta(base: PhpToolkitMetrics, delta: MetricsDelta): PhpToolkitMet
     commands,
     triggerHits: base.triggerHits + delta.triggerHits,
     routing: mergeRoutingMetrics(base.routing ?? emptyRoutingMetrics(), delta.routing),
+    verification: mergeVerification(
+      base.verification ?? emptyVerificationMetrics(),
+      delta.verification,
+    ),
   };
 }
 
@@ -762,6 +817,27 @@ export class MetricsStore {
 
   async recordRouting(event: RoutingMetricEvent): Promise<void> {
     applyRoutingEvent(this.delta.routing, event, new Date().toISOString());
+    this.markDirty();
+  }
+
+  async recordVerification(input: {
+    status: AggregateStatus;
+    checks: readonly CheckResult[];
+    findings: number;
+  }): Promise<void> {
+    const now = new Date().toISOString();
+    const verification = this.delta.verification;
+    verification.runs += 1;
+    verification[input.status] += 1;
+    for (const check of input.checks) {
+      if (check.status === "warning") verification.warning += 1;
+      else if (check.status === "skipped") verification.skipped += 1;
+      else if (check.status === "timed_out") verification.timedOut += 1;
+      else if (check.status === "cancelled") verification.cancelled += 1;
+    }
+    verification.findings += nonNegative(input.findings);
+    verification.lastRunAt = now;
+    verification.lastStatus = input.status;
     this.markDirty();
   }
 
