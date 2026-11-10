@@ -61,6 +61,30 @@ describe("classify", () => {
     expect(knowledge.questionForm).toBe(true);
   });
 
+  it("detects comparisons independently of question form", () => {
+    const knowledge = classify({
+      prompt: "What is the difference between Strategy and Adapter?",
+      ...base,
+    });
+    expect(knowledge.questionForm).toBe(true);
+    expect(knowledge.comparison).toBe(true);
+
+    const actionable = classify({
+      prompt: "Compare Strategy and Adapter for a review.",
+      ...base,
+    });
+    expect(actionable.questionForm).toBe(false);
+    expect(actionable.comparison).toBe(true);
+
+    const implementation = classify({
+      prompt:
+        "How do I put Strategy and Adapter in my PHP architecture? Please make those changes.",
+      ...base,
+    });
+    expect(implementation.questionForm).toBe(true);
+    expect(implementation.comparison).toBe(false);
+  });
+
   it("treats an active PHP agent as an explicit PHP-context signal", () => {
     const result = classify({
       prompt: "Review this component.",
@@ -106,6 +130,48 @@ describe("classify", () => {
     });
     expect(result.phpContext).toBe(true);
     expect(result.intents).toContain("Review");
+  });
+
+  it("records promoted pattern names strongest first", () => {
+    const two = classify({
+      prompt: "Refactor to the Strategy pattern and add an adapter.",
+      ...base,
+    });
+    expect(two.promotedPatterns).toEqual(["strategy", "adapter"]);
+
+    const one = classify({ prompt: "Explain the Strategy pattern.", ...base });
+    expect(one.promotedPatterns).toEqual(["strategy"]);
+    expect(one.questionForm).toBe(true);
+
+    const generic = classify({ prompt: "Improve the design pattern usage.", ...base });
+    expect(generic.promotedPatterns).toEqual([]);
+  });
+
+  it("records state machine as a state-pattern signal", () => {
+    const result = classify({
+      prompt: "Refactor the switch into a state machine.",
+      ...base,
+    });
+    expect(result.promotedPatterns).toEqual(["state"]);
+  });
+
+  it("does not let a data provider count as a design-pattern provider", () => {
+    const result = classify({
+      prompt: "Add a data provider for the invoice tests.",
+      ...base,
+    });
+    expect(result.scores["Design patterns"]).toBe(0);
+    expect(result.scores.Testing).toBeGreaterThanOrEqual(2);
+  });
+
+  it("records no promoted patterns without PHP context", () => {
+    const result = classify({
+      prompt: "Use the strategy pattern in this TypeScript file.",
+      ...base,
+      files: [],
+    });
+    expect(result.phpContext).toBe(false);
+    expect(result.promotedPatterns).toEqual([]);
   });
 
   it("notes framework context without treating it as PHP context", () => {

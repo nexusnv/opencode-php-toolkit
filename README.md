@@ -16,9 +16,17 @@ Published package (after `npm publish`):
 // opencode.jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["opencode-php-toolkit@0.2.0"]
+  "plugins": ["opencode-php-toolkit@0.1.1"]
 }
 ```
+
+> The npm, tag and commit pins in this section point at the latest published
+> release (`0.1.1`). Several features described below are not in that release:
+> the pattern library and routing, `php_test`, `php_metrics`, `/php-toolkit-status`
+> and the postinstall agent copy. On `0.1.1`, copy the four `agents/php-*.md`
+> files from the package into `~/.config/opencode/agents/` manually. To try the
+> current features, use the local path form or a build from this branch. The
+> release checklist updates these pins.
 
 > On install, the package copies the four `agents/php-*.md` files into
 > `~/.config/opencode/agents/` as a convenience (see below). Existing files
@@ -34,7 +42,7 @@ as-is; always run `npm run build` before committing):
 # Latest on main
 opencode plugin add github:nexusnv/opencode-php-toolkit
 # Pinned (recommended for teams)
-opencode plugin add github:nexusnv/opencode-php-toolkit#v0.2.0
+opencode plugin add github:nexusnv/opencode-php-toolkit#v0.1.1
 ```
 
 Or per-project in `opencode.jsonc` (same spec forms, plus branch/commit):
@@ -42,9 +50,9 @@ Or per-project in `opencode.jsonc` (same spec forms, plus branch/commit):
 ```jsonc
 {
   "plugins": [
-    "github:nexusnv/opencode-php-toolkit#v0.2.0",
+    "github:nexusnv/opencode-php-toolkit#v0.1.1",
     "github:nexusnv/opencode-php-toolkit#main",
-    "git+ssh://git@github.com/nexusnv/opencode-php-toolkit.git#6eb66d4"
+    "git+ssh://git@github.com/nexusnv/opencode-php-toolkit.git#89a8211"
   ]
 }
 ```
@@ -71,7 +79,7 @@ opencode plugin add file:///home/leonidas/dev/nexusnv/opencode-php-toolkit
 ## What you get
 
 - Agents (`agents/php-*.md`, `mode: subagent`): `php-reviewer`, `php-debugger`, `php-modernizer`, `php-tester`. On install, the package's `postinstall` script copies these four files into `~/.config/opencode/agents/` as a convenience, never overwriting files that already exist (v2 `AgentEditor` has no `add`; transforms can't create agents — files are the source of truth). Set `PHP_TOOLKIT_SKIP_AGENT_COPY=1` in the environment to opt out. The script writes nothing besides those four files (the OpenCode `commands/` directory is not touched). To undo after install, delete `php-reviewer.md`, `php-debugger.md`, `php-modernizer.md` and `php-tester.md` from `~/.config/opencode/agents/`.
-- Skills (8, autoinvoke): `php-standards`, `php-static-analysis`, `php-testing`, `php-security`, `php-modernize`, `php-composer`, `php-architecture`, `php-debug`.
+- Skills (13: 9 advertised, 4 hidden): `php-standards`, `php-static-analysis`, `php-testing`, `php-security`, `php-modernize`, `php-composer`, `php-architecture`, `php-debug`, and the advertised `php-design-patterns` index. Hidden core pattern skills (`autoinvoke: false`) are attached only by the router: `php-pattern-strategy`, `php-pattern-adapter`, `php-pattern-decorator`, `php-pattern-state`.
 - Commands (8): `/php-review`, `/php-analyze`, `/php-fix-style`, `/php-test`, `/php-audit`, `/php-upgrade`, `/php-scaffold`, `/php-toolkit-status`.
 - Tools (`php_*` namespace, read-only unless noted):
   - `php_project_detect` — composer intel incl. analyzer/fixer config files and `composer config.platform.php`; no exec
@@ -83,13 +91,26 @@ opencode plugin add file:///home/leonidas/dev/nexusnv/opencode-php-toolkit
   - `php_metrics` — local usage metrics; `reset: true` clears this project's metrics, `export: true` dumps the snapshot as raw JSON (absolute project path omitted)
 - Hooks: `prompt` runs deterministic routing for PHP-context prompts, `context` adds the stable L0 engineering constitution plus one compact routing-state part, `tool.execute.before` warns on destructive `composer update` / `rector process` without `--dry-run` / `php-cs-fixer fix` without `--dry-run`.
 
-## Reactive routing (0.2.0)
+## Reactive routing (0.3.0)
 
 Routing is deterministic, silent and risk-based by default. The plugin classifies each
 PHP-context prompt into at most two intents (Build, Design, Review, Debug, Test, Maintain)
 and three concerns (Security, Testing, Debugging, Static analysis, Architecture, Design
-patterns, Coding standards, Dependencies), then attaches up to three of the eight existing
-skills. No pattern skills ship in this phase. Non-PHP prompts attach nothing.
+patterns, Coding standards, Dependencies), then attaches up to three skills. Non-PHP
+prompts attach nothing.
+
+Pattern routing is problem-first. A generic design task attaches the `php-design-patterns`
+index; one named promoted pattern (strategy, adapter, decorator, state) attaches that core
+skill; two or more named patterns in an actionable task attach at most two; comparison
+questions use the index. Repository and Ports & Adapters are references, not promoted
+skills. The index reads at most two reference files on demand, and references never count
+against the attachment budget.
+
+`architectureMode` controls the guidance rendered in the state part: `risk` (default) asks
+for a one-line rationale on small reversible changes, a stated pattern and trade-off on
+moderate changes, and 2–3 options plus approval for significant boundary, persistence,
+events, DI or breaking API changes; `strict` always asks for a design note and approval;
+`off` removes the architecture line.
 
 Attached is not loaded. `/php-toolkit-status` reports `selected`, `attached` and
 `activated` separately; only a `session.skill.activated` event proves a skill loaded.
@@ -287,10 +308,12 @@ MIT — NexusNV.
 ## Releasing
 
 1. `npm run build` (commits fresh `dist/` — required for git installs).
-2. Bump `version` in `package.json`, commit, tag `vX.Y.Z`, push all three.
-3. `npm publish --no-provenance` (local publishes can't attest; use a
+2. Bump `version` in `package.json` and update the README install pins (npm
+   version, git tag and commit example) to the new release.
+3. Commit, tag `vX.Y.Z`, push all three.
+4. `npm publish --no-provenance` (local publishes can't attest; use a
    Trusted Publishing workflow instead if you want provenance).
-4. Fresh versions take a few minutes to appear (staged `0.0.0-stage`
+5. Fresh versions take a few minutes to appear (staged `0.0.0-stage`
    placeholder first). Machines with `min-release-age` in `~/.npmrc` won't
    `plugin add` them until that age passes — allow `0` temporarily to
    verify, then restore.

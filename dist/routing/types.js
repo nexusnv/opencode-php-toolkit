@@ -9,6 +9,7 @@ export const CONCERNS = [
     "Static analysis",
     "Debugging",
 ];
+export const PROMOTED_PATTERNS = ["strategy", "adapter", "decorator", "state"];
 /** Persisted attempt counters must stay within the hydration bound. */
 export const MAX_UNACTIVATED_ATTEMPTS = 1_000;
 /** Maximum persisted path length accepted by hydration and task tracking. */

@@ -33,7 +33,20 @@ export const SKILL_IDS = [
   "php-composer",
   "php-architecture",
   "php-debug",
+  "php-design-patterns",
+  "php-pattern-strategy",
+  "php-pattern-adapter",
+  "php-pattern-decorator",
+  "php-pattern-state",
 ] as const;
+
+/** Core pattern skills are attached by the router, not advertised for autoinvoke. */
+export const HIDDEN_SKILL_IDS: ReadonlySet<string> = new Set([
+  "php-pattern-strategy",
+  "php-pattern-adapter",
+  "php-pattern-decorator",
+  "php-pattern-state",
+]);
 
 export const COMMAND_DEFS = [
   { file: "commands/php-review.md", name: "php-review", fallback: "Review PHP code for correctness, security, and style" },

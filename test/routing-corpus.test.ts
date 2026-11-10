@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { classify } from "../src/routing/classifier.js";
 import { selectSkills } from "../src/routing/selector.js";
 
+const CURRENT_PHASE = 2;
+
 const contentLengths = new Map([
   ["php-architecture", 1000],
   ["php-testing", 900],
@@ -12,6 +14,11 @@ const contentLengths = new Map([
   ["php-composer", 600],
   ["php-modernize", 600],
   ["php-static-analysis", 600],
+  ["php-design-patterns", 4200],
+  ["php-pattern-strategy", 2400],
+  ["php-pattern-adapter", 2400],
+  ["php-pattern-decorator", 2400],
+  ["php-pattern-state", 2400],
 ]);
 
 interface CorpusCase {
@@ -44,38 +51,34 @@ function selectForCorpus(c: CorpusCase): string[] {
     concerns: current.concerns,
     maintainSubtype: current.maintainSubtype,
     questionForm: current.questionForm,
+    comparison: current.comparison,
     explicit: [],
     activated: new Set<string>(),
     unactivated: [],
     config: { maxSkills: 3, maxSkillChars: 12000 },
     contentLengths,
     scores: current.scores,
+    promotedPatterns: current.promotedPatterns,
   }).selected;
 }
 
-describe("phase 1 routing corpus", () => {
-  it("contains every spec case R01-R49", () => {
+describe("routing corpus", () => {
+  it("contains every spec case R01-R50", () => {
     const ids = new Set(cases.map((c) => c.id));
-    for (let i = 1; i <= 49; i += 1) {
+    for (let i = 1; i <= 50; i += 1) {
       expect(ids.has(`R${String(i).padStart(2, "0")}`)).toBe(true);
     }
   });
 
-  it("gives every Phase 2 case a reason", () => {
-    for (const c of cases.filter((x) => x.enabledInPhase > 1)) {
-      expect(c.reason).toBe("pattern-library-not-shipped");
+  it("gives every future-phase case a reason", () => {
+    for (const c of cases.filter((x) => x.enabledInPhase > CURRENT_PHASE)) {
+      expect(c.reason).toBeDefined();
     }
   });
 
-  for (const c of cases.filter((x) => x.enabledInPhase <= 1)) {
+  for (const c of cases.filter((x) => x.enabledInPhase <= CURRENT_PHASE)) {
     it(c.id, () => {
       expect(new Set(selectForCorpus(c))).toEqual(new Set(c.expected));
     });
   }
-
-  it("keeps R20's shipped selection even though its pattern skill is deferred", () => {
-    const r20 = cases.find((c) => c.id === "R20");
-    expect(r20).toBeDefined();
-    expect(selectForCorpus(r20 as CorpusCase)).toContain("php-architecture");
-  });
 });

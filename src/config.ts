@@ -4,8 +4,9 @@ export interface ToolkitConfig {
   autoSkills: "attach" | "hint" | "off";
   maxSkills: number;
   maxSkillChars: number;
-  // Architecture workflow mode. Phase 1 uses "off" to disable classifier
-  // design gating; "strict" is reserved for the later approval workflow.
+  // Architecture workflow mode. "risk" gives risk-based guidance, "strict"
+  // always asks for a design note before implementation, and "off" removes
+  // the architecture gate and its state-part guidance.
   architectureMode: "risk" | "strict" | "off";
   // Reserved for later phases; parsed but inert in Phase 1.
   architectureScan: "tool" | "auto" | "off";

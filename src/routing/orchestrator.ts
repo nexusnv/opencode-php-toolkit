@@ -76,6 +76,9 @@ export async function runRouting(
     mode: config.architectureMode,
   });
   const state = loaded.state;
+  // Config is the source of truth for the architecture gate. A session saved
+  // under a different mode must render the current mode after a restart.
+  state.mode = config.architectureMode;
   const current = classify({
     prompt: input.text,
     files: input.files,
@@ -122,6 +125,7 @@ export async function runRouting(
     concerns: withTask.activeConcerns,
     maintainSubtype: withTask.maintainSubtype,
     questionForm: current.questionForm,
+    comparison: current.comparison,
     explicit: input.skills,
     activated: withTask.activatedSkills,
     unactivated: withTask.unactivatedSkills,
@@ -131,6 +135,7 @@ export async function runRouting(
     denied: deniedSkills,
     scores: current.scores,
     agentDefault: null,
+    promotedPatterns: current.promotedPatterns,
   });
   const explicitIDs = new Set(input.skills.map((skill) => skill.id));
   const permissioned = filterByPermission(

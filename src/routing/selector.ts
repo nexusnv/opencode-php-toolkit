@@ -1,8 +1,15 @@
 import { MAX_ROUTER_SKILL_CHARS } from "../config.js";
-import { CONCERN_SKILL_BY_TARGET, type CatalogEntry } from "./catalog.js";
+import { CONCERN_SKILL_BY_TARGET, PATTERN_CORE_BY_NAME, PATTERN_INDEX, type CatalogEntry } from "./catalog.js";
 import { normalizePrompt, stripCodeFences, termToRegex } from "./classifier.js";
 import { CONCERN_PRIORITY } from "./signals.js";
-import type { Concern, Intent, MaintainSubtype, Target, UnactivatedSkill } from "./types.js";
+import type {
+  Concern,
+  Intent,
+  MaintainSubtype,
+  PromotedPattern,
+  Target,
+  UnactivatedSkill,
+} from "./types.js";
 
 export interface SelectorInput {
   prompt: string;
@@ -10,6 +17,8 @@ export interface SelectorInput {
   concerns: Concern[];
   maintainSubtype: MaintainSubtype | null;
   questionForm: boolean;
+  /** Explicit comparison language, independent of question form. */
+  comparison?: boolean;
   explicit: ReadonlyArray<{ id: string }>;
   activated: ReadonlySet<string>;
   unactivated: readonly UnactivatedSkill[];
@@ -21,6 +30,8 @@ export interface SelectorInput {
   denied?: ReadonlySet<string>;
   scores?: Partial<Record<Target, number>>;
   agentDefault?: Intent | null;
+  /** Promoted pattern names matched in the prompt, strongest first. */
+  promotedPatterns?: readonly PromotedPattern[];
 }
 
 export interface SelectorResult {
@@ -79,6 +90,7 @@ export function selectSkills(input: SelectorInput): SelectorResult {
     concerns,
     maintainSubtype,
     questionForm,
+    comparison = false,
     explicit,
     activated,
     unactivated,
@@ -88,6 +100,7 @@ export function selectSkills(input: SelectorInput): SelectorResult {
     denied,
     scores,
     agentDefault,
+    promotedPatterns = [],
   } = input;
 
   const normalized = stripCodeFences(normalizePrompt(prompt)).replace(/@[a-z0-9-]+/g, " ");
@@ -259,6 +272,46 @@ export function selectSkills(input: SelectorInput): SelectorResult {
         tryAdd(coSkill.id, coSkill.reason);
       }
     }
+  }
+
+  // Pattern skills are co-skills of the Design intent and of any actionable
+  // task with Patterns >= 2. A comparison or knowledge question with several
+  // names uses the index because comparing patterns is the index's job.
+  const patternChoices = (): Array<{ id: string; reason: string }> => {
+    const patternsScore = scores?.["Design patterns"] ?? 0;
+    const design = effectiveIntents.includes("Design");
+    const actionable = effectiveIntents.some(
+      (intent) =>
+        intent === "Build" || intent === "Design" || intent === "Review" || intent === "Maintain",
+    );
+
+    if (promotedPatterns.length === 0) {
+      return design || patternsScore >= 2
+        ? [{ id: PATTERN_INDEX.id, reason: "pattern:index" }]
+        : [];
+    }
+    // Design is the one intent where the index is required below the normal
+    // Patterns >= 2 gate; every other intent respects the threshold.
+    if (!design && patternsScore < 2) return [];
+    // Comparisons use the index regardless of question form. A non-comparison
+    // question that still carries an actionable intent (for example a how-to
+    // request with "please make those changes") selects the core skills.
+    if (promotedPatterns.length >= 2 && (comparison || !actionable)) {
+      return [{ id: PATTERN_INDEX.id, reason: "pattern:index" }];
+    }
+
+    const wanted = promotedPatterns.slice(0, actionable ? 2 : 1);
+    const out: Array<{ id: string; reason: string }> = [];
+    for (const name of wanted) {
+      const entry = PATTERN_CORE_BY_NAME.get(name);
+      if (entry) out.push({ id: entry.id, reason: `pattern:${name}` });
+    }
+    return out;
+  };
+
+  for (const choice of patternChoices()) {
+    coSkillSet.add(choice.id);
+    tryAdd(choice.id, choice.reason);
   }
 
   const concernCandidates: CatalogEntry[] = [...CONCERN_SKILL_BY_TARGET.values()]

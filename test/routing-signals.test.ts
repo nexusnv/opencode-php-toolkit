@@ -4,6 +4,7 @@ import {
   CONCERN_SIGNALS,
   INTENT_PRIORITY,
   CONCERN_PRIORITY,
+  PATTERN_NAME_SIGNALS,
 } from "../src/routing/signals.js";
 
 describe("routing dictionary", () => {
@@ -56,6 +57,16 @@ describe("routing dictionary", () => {
     expect(pairsFor("phpstan")).toEqual(["Static analysis:3"]);
     expect(pairsFor("xdebug")).toEqual(["Debugging:3"]);
     expect(pairsFor("coding standard")).toEqual(["Coding standards:3"]);
+  });
+
+  it("keeps promoted pattern signals at their required weight", () => {
+    const pairs = PATTERN_NAME_SIGNALS.map(
+      (entry) => `${entry.name}:${entry.term}:${entry.weight}`,
+    );
+    expect(pairs).toContain("strategy:strategy pattern:3");
+    expect(pairs).toContain("adapter:adapter:2");
+    expect(pairs).toContain("decorator:decorator pattern:3");
+    expect(pairs).toContain("state:state machine:2");
   });
 
 });
