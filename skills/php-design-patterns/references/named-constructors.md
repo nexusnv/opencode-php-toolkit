@@ -44,7 +44,7 @@ final class Money
         }
 
         $fraction = $exponent === 0 ? '' : '(?:\.(\d{1,' . $exponent . '}))?';
-        if (preg_match('/^(0|[1-9]\d*)' . $fraction . '$/', $amount, $matches) !== 1) {
+        if (preg_match('/^(0|[1-9]\d*)' . $fraction . '\z/', $amount, $matches) !== 1) {
             throw new InvalidArgumentException(
                 $exponent === 0
                     ? 'Amount must be a whole number for this currency.'

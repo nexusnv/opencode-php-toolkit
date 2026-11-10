@@ -18,6 +18,7 @@ interface UnitOfWork
 {
     public function begin(): void;
     public function register(object $entity): void;
+    /** Flushes registered entities, then commits the transaction. */
     public function commit(): void;
     public function rollback(): void;
 }
@@ -47,6 +48,10 @@ final class OrderPlacement
     }
 }
 ```
+
+`commit()` must flush the same entity manager that `OrderRepository::save()`
+schedules into before it commits the transaction. If it only commits the
+connection, the inventory reservation can persist without the order.
 
 Keep commits at the application boundary, not inside domain methods.
 

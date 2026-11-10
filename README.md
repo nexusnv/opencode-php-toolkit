@@ -21,9 +21,12 @@ Published package (after `npm publish`):
 ```
 
 > The npm, tag and commit pins in this section point at the latest published
-> release (`0.1.1`). The pattern library and routing described below are not in
-> that release yet; use the local path form or a build from this branch to try
-> them before the next publish. The release checklist updates these pins.
+> release (`0.1.1`). Several features described below are not in that release:
+> the pattern library and routing, `php_test`, `php_metrics`, `/php-toolkit-status`
+> and the postinstall agent copy. On `0.1.1`, copy the four `agents/php-*.md`
+> files from the package into `~/.config/opencode/agents/` manually. To try the
+> current features, use the local path form or a build from this branch. The
+> release checklist updates these pins.
 
 > On install, the package copies the four `agents/php-*.md` files into
 > `~/.config/opencode/agents/` as a convenience (see below). Existing files
