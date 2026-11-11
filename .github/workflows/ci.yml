@@ -15,7 +15,7 @@ jobs:
         # vitest 5 requires Node >= 22.12, so the full suite runs here.
         node: [22, 24]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # No step pushes to git; dependency install scripts must not see the token.
           persist-credentials: false
@@ -42,7 +42,7 @@ jobs:
     name: Node 20 compat (published engines floor)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-node@v4
