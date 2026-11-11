@@ -1,3 +1,4 @@
+import { type AggregateStatus, type CheckResult } from "../verify/types.js";
 /**
  * Outcome of a single tool invocation.
  *
@@ -51,6 +52,8 @@ export interface VerificationMetrics {
     cancelled: number;
     findings: number;
     lastRunAt: string | null;
+    /** Aggregate status of the most recent run; null when never run. */
+    lastStatus: AggregateStatus | null;
 }
 export interface ScannerMetrics {
     runs: number;
@@ -175,6 +178,7 @@ export type MetricsDelta = {
     }>;
     triggerHits: number;
     routing: RoutingMetrics;
+    verification: VerificationMetrics;
 };
 export declare function mergeRoutingMetrics(a: RoutingMetrics, b: RoutingMetrics): RoutingMetrics;
 /** Applies one routing event to a counter document. */
@@ -247,6 +251,11 @@ export declare class MetricsStore {
     }): Promise<void>;
     recordTrigger(): Promise<void>;
     recordRouting(event: RoutingMetricEvent): Promise<void>;
+    recordVerification(input: {
+        status: AggregateStatus;
+        checks: readonly CheckResult[];
+        findings: number;
+    }): Promise<void>;
     /**
      * Persists pending changes.
      *

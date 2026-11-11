@@ -1,4 +1,5 @@
 import type { PhpToolkitMetrics } from "./store.js";
+export declare function formatTimestamp(iso: string): string;
 /** Result of the machine-wide scan, including whether it could be completed. */
 export type ProjectScan = {
     projects: PhpToolkitMetrics[];

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { serializeStorageState } from "../src/routing/persistence.js";
 import plugin from "../src/index.js";
@@ -16,6 +17,8 @@ interface FakeOverrides {
   roots?: Record<string, string>;
   events?: Array<{ type: string; data: any }>;
   storageSeed?: Record<string, unknown>;
+  vcs?: { data: Array<{ file: string; status: "added" | "deleted" | "modified" }> };
+  sessionGetError?: string;
 }
 
 async function waitFor(predicate: () => Promise<boolean>, timeout = 1000): Promise<void> {
@@ -45,6 +48,11 @@ function fakePluginContext(overrides: FakeOverrides = {}) {
   const contextHooks: Array<(event: any) => Promise<void> | void> = [];
   const compactionHooks: Array<(event: any) => Promise<void> | void> = [];
   const commands: Array<{ name: string; execute: (input: any) => Promise<void> }> = [];
+  const tools: Array<{
+    name: string;
+    input?: any;
+    execute: (input: any, context: any) => Promise<any>;
+  }> = [];
   const prompted: Array<{ sessionID: string; text: string; metadata?: Record<string, unknown> }> = [];
   const defaultRoot = resolve("fixtures/php-app");
   const storageEntries = new Map<string, unknown>(Object.entries(overrides.storageSeed ?? {}));
@@ -75,6 +83,7 @@ function fakePluginContext(overrides: FakeOverrides = {}) {
     options: overrides.options ?? { autoSkills: "attach" },
     session: {
       get: async (input: { sessionID: string }) => {
+        if (overrides.sessionGetError) throw new Error(overrides.sessionGetError);
         const directory = overrides.roots?.[input.sessionID] ?? defaultRoot;
         return {
           id: input.sessionID,
@@ -110,10 +119,21 @@ function fakePluginContext(overrides: FakeOverrides = {}) {
     },
     tool: {
       transform: async (cb: any) => {
-        cb({ namespace() {}, add() {} });
+        cb({
+          namespace() {},
+          add(tool: any) {
+            tools.push(tool);
+          },
+        });
         return { dispose: async () => {} };
       },
       hook: async () => ({ dispose: async () => {} }),
+    },
+    vcs: {
+      status: async () => ({
+        location: { directory: overrides.roots?.s1 ?? defaultRoot },
+        data: overrides.vcs?.data ?? [],
+      }),
     },
     skill: {
       transform: async (cb: any) => {
@@ -148,6 +168,7 @@ function fakePluginContext(overrides: FakeOverrides = {}) {
     commands,
     prompted,
     skills,
+    tools,
   };
 }
 
@@ -617,6 +638,78 @@ describe("plugin routing integration", () => {
     };
     await fake.triggerCompactionHook(event);
     expect(event.result.summary).toBe("keep me");
+    await cleanup();
+  });
+
+  it("registers php_verify with the documented input schema", async () => {
+    const { fake, cleanup } = await setupPlugin();
+    const verify = fake.tools.find((tool) => tool.name === "verify");
+    expect(verify).toBeDefined();
+    expect(verify!.input.properties.scope.enum).toEqual(["changed", "all"]);
+    expect(verify!.input.properties.checks.items.enum).toEqual([
+      "lint",
+      "composer",
+      "tests",
+      "static",
+      "style",
+      "architecture",
+    ]);
+    await cleanup();
+  });
+
+  it("returns a verification report through the registered tool", async () => {
+    const { fake, cleanup } = await setupPlugin({ vcs: { data: [] } });
+    const verify = fake.tools.find((tool) => tool.name === "verify")!;
+    const result = await verify.execute(
+      { scope: "changed", checks: ["composer"] },
+      { signal: new AbortController().signal, sessionID: "s1" },
+    );
+    expect(result.content).toContain("PHP verification (scope: changed)");
+    expect(result.content).toContain("composer");
+    await cleanup();
+  });
+
+  it("fails closed when the session cannot be resolved", async () => {
+    const { fake, cleanup } = await setupPlugin({
+      sessionGetError: "session store unavailable",
+      vcs: { data: [] },
+    });
+    const verify = fake.tools.find((tool) => tool.name === "verify")!;
+    const result = await verify.execute(
+      { scope: "changed", checks: ["tests"] },
+      { signal: new AbortController().signal, sessionID: "s1" },
+    );
+    expect(result.content).toContain("could not resolve the session");
+    expect(result.content).toContain("Verification was not run");
+    await cleanup();
+  });
+
+  it("attributes php_verify metrics to the session root, not the plugin root", async () => {
+    const sessionRoot = realpathSync(resolve("fixtures/php-app"));
+    const { fake, cleanup } = await setupPlugin({
+      vcs: { data: [] },
+      roots: { s1: sessionRoot },
+    });
+    const verify = fake.tools.find((tool) => tool.name === "verify")!;
+    await verify.execute(
+      { scope: "changed", checks: ["composer"] },
+      { signal: new AbortController().signal, sessionID: "s1" },
+    );
+    // Flushes every store this process holds, including the session project's.
+    const metricsTool = fake.tools.find((tool) => tool.name === "metrics")!;
+    await metricsTool.execute(
+      { export: true },
+      { signal: new AbortController().signal, sessionID: "s1" },
+    );
+    const documents = [...fake.storageEntries.values()] as Array<{
+      projectPath?: string;
+      tools?: Record<string, { runs?: number }>;
+      verification?: { runs?: number };
+    }>;
+    const sessionDocs = documents.filter((doc) => doc?.projectPath === sessionRoot);
+    expect(sessionDocs).toHaveLength(1);
+    expect(sessionDocs[0].tools?.php_verify?.runs).toBe(1);
+    expect(sessionDocs[0].verification?.runs).toBe(1);
     await cleanup();
   });
 });

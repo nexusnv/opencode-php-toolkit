@@ -1,5 +1,7 @@
 import type { Plugin } from "@opencode/plugin";
 import type { ToolkitConfig } from "../config.js";
+import type { VerificationMetrics } from "../metrics/store.js";
+import { formatTimestamp } from "../metrics/format.js";
 import type { ProjectProfile, ProjectProfileCache } from "../profile.js";
 import { cacheSessionState, loadPersistedSessionState } from "../routing/persistence.js";
 import { createSessionState, type RoutingRenderContexts } from "../routing/state.js";
@@ -9,6 +11,7 @@ export interface ToolkitStatusInput {
   profile: ProjectProfile | null;
   state: SessionRoutingState | null;
   config: ToolkitConfig;
+  verification?: VerificationMetrics | null;
 }
 
 function slug(target: string): string {
@@ -53,6 +56,15 @@ function reasonsFor(state: SessionRoutingState): string[] {
     ...state.unactivatedSkills.map((skill) => skill.reason),
   ];
   return [...new Set(reasons)];
+}
+
+function verificationLine(verification?: VerificationMetrics | null): string {
+  if (!verification || verification.runs === 0 || !verification.lastRunAt) {
+    return "  Verify: not run yet";
+  }
+  return `  Verify: last run ${formatTimestamp(verification.lastRunAt)} — ${
+    verification.lastStatus ?? "unknown"
+  } (${verification.runs} run(s), ${verification.findings} finding(s))`;
 }
 
 export function renderToolkitStatus(input: ToolkitStatusInput): string {
@@ -103,7 +115,7 @@ export function renderToolkitStatus(input: ToolkitStatusInput): string {
   lines.push(
     `  Mode: ${config.architectureMode} | scan: ${config.architectureScan} | announce: ${config.announceSelections}`,
   );
-  lines.push("  Verify: unavailable (Phase 3)");
+  lines.push(verificationLine(input.verification));
   return lines.join("\n");
 }
 
@@ -115,6 +127,7 @@ export async function buildCurrentStatusSnapshot(
     sessions: Map<string, SessionRoutingState>;
     renderContexts?: RoutingRenderContexts;
     config: ToolkitConfig;
+    verificationFor?: (root: string) => Promise<VerificationMetrics>;
   },
 ): Promise<string> {
   const session = await ctx.session
@@ -123,7 +136,12 @@ export async function buildCurrentStatusSnapshot(
 
   const root = session?.location?.directory;
   if (!root) {
-    return renderToolkitStatus({ profile: null, state: null, config: input.config });
+    return renderToolkitStatus({
+      profile: null,
+      state: null,
+      config: input.config,
+      verification: null,
+    });
   }
 
   const subpath = session?.subpath ?? null;
@@ -155,5 +173,10 @@ export async function buildCurrentStatusSnapshot(
       profile,
       mode: input.config.architectureMode,
     });
-  return renderToolkitStatus({ profile, state: view, config: input.config });
+  return renderToolkitStatus({
+    profile,
+    state: view,
+    config: input.config,
+    verification: (await input.verificationFor?.(root)) ?? null,
+  });
 }

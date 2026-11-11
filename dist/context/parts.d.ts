@@ -4,7 +4,9 @@ type SystemPart = {
     text: string;
     metadata?: Record<string, unknown>;
 };
-export declare function renderToolkitStatePart(context: RoutingRenderContext): string;
+export declare function renderToolkitStatePart(context: RoutingRenderContext, options?: {
+    verification?: "remind" | "off";
+}): string;
 export declare const PHP_TOOLKIT_PART = "php-toolkit";
 export declare function removePhpToolkitParts(system: SystemPart[]): SystemPart[];
 export declare function l0Part(): SystemPart;

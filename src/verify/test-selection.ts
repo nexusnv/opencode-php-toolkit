@@ -1,0 +1,224 @@
+import { readdir, stat } from "node:fs/promises";
+import { basename, join } from "node:path";
+import type { ProjectProfile } from "../profile.js";
+import {
+  MAX_SCOPE_FILES,
+  containedConfiguredRoots,
+  normalizeConfiguredRoot,
+  type ChangedScope,
+} from "./changed.js";
+import { REASONS } from "./types.js";
+
+/** Bounded scan for `*Test.php` files under the test roots. */
+export const MAX_TEST_SEARCH_ENTRIES = 2_000;
+/** Above this, a targeted run costs more than it saves; use the full suite. */
+export const MAX_TARGETED_TESTS = 200;
+const CONVENTION_DIRS = ["Unit", "Feature", "Integration"];
+const SKIPPED_DIRS = new Set(["vendor", "node_modules"]);
+
+export interface TestSelection {
+  mode: "targeted" | "full-suite" | "none";
+  /** Root-relative test paths; always empty for full-suite and none. */
+  paths: string[];
+  direct: number;
+  mapped: number;
+  fallbackReason: string | null;
+}
+
+function underAny(file: string, roots: readonly string[]): boolean {
+  return roots.some((root) => file === root || file.startsWith(`${root}/`));
+}
+
+function relativeTo(file: string, roots: readonly string[]): string | null {
+  for (const root of roots) {
+    if (file.startsWith(`${root}/`)) return file.slice(root.length + 1);
+  }
+  return null;
+}
+
+async function existingDir(root: string, name: string): Promise<boolean> {
+  try {
+    return (await stat(join(root, name))).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function findRoots(
+  root: string,
+  configured: readonly string[],
+  conventional: readonly string[],
+): Promise<string[]> {
+  const roots = configured.filter((dir) => normalizeConfiguredRoot(dir) !== "");
+  if (roots.length > 0) {
+    return (await containedConfiguredRoots(root, roots)).roots;
+  }
+  const present = await Promise.all(
+    conventional.map(async (name) => ((await existingDir(root, name)) ? name : null)),
+  );
+  const contained = await containedConfiguredRoots(
+    root,
+    present.filter((name): name is string => name !== null),
+  );
+  return contained.roots;
+}
+
+async function isFile(root: string, rel: string): Promise<boolean> {
+  try {
+    return (await stat(join(root, rel))).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isTestConfig(file: string): boolean {
+  const name = basename(file);
+  return (
+    name === "phpunit.xml" ||
+    name === "phpunit.xml.dist" ||
+    name === "phpunit.dist.xml" ||
+    name === "pest.xml"
+  );
+}
+
+interface TestIndex {
+  byName: Map<string, string[]>;
+  truncated: boolean;
+}
+
+/** Indexes `*Test.php` basenames under the test roots with a bounded walk. */
+async function indexTestFiles(root: string, testRoots: readonly string[]): Promise<TestIndex> {
+  const byName = new Map<string, string[]>();
+  let seen = 0;
+  let truncated = false;
+  for (const testRoot of testRoots) {
+    const stack = [testRoot];
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      let entries;
+      try {
+        entries = await readdir(join(root, current), { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      entries.sort((a, b) => a.name.localeCompare(b.name));
+      for (const entry of entries) {
+        if (entry.name.startsWith(".") || entry.isSymbolicLink()) continue;
+        seen += 1;
+        if (seen > MAX_TEST_SEARCH_ENTRIES) {
+          return { byName, truncated: true };
+        }
+        const rel = `${current}/${entry.name}`;
+        if (entry.isDirectory()) {
+          if (!SKIPPED_DIRS.has(entry.name)) stack.push(rel);
+          continue;
+        }
+        if (!entry.isFile() || !entry.name.endsWith("Test.php")) continue;
+        const list = byName.get(entry.name) ?? [];
+        list.push(rel);
+        byName.set(entry.name, list);
+      }
+    }
+  }
+  for (const list of byName.values()) list.sort((a, b) => a.localeCompare(b));
+  return { byName, truncated: false };
+}
+
+export async function selectTests(input: {
+  root: string;
+  profile: ProjectProfile;
+  changed: ChangedScope;
+}): Promise<TestSelection> {
+  const testRoots = await findRoots(input.root, input.profile.layout.testRoots, ["tests", "test", "spec"]);
+  const sourceRoots = await findRoots(input.root, input.profile.layout.sourceRoots, ["src"]);
+  const phpChanged = input.changed.files.filter((file) => file.endsWith(".php"));
+  const direct = phpChanged.filter((file) => underAny(file, testRoots));
+  const sourceChanged = phpChanged.filter(
+    (file) => !underAny(file, testRoots) && underAny(file, sourceRoots),
+  );
+  const deletedSources = input.changed.deleted.filter(
+    (file) => file.endsWith(".php") && !underAny(file, testRoots),
+  );
+  const directOnly = (): TestSelection => ({
+    mode: direct.length > 0 ? "targeted" : "none",
+    paths: direct,
+    direct: direct.length,
+    mapped: 0,
+    fallbackReason: null,
+  });
+  const fallback = (mapped: number): TestSelection => ({
+    mode: "full-suite",
+    paths: [],
+    direct: direct.length,
+    mapped,
+    fallbackReason: REASONS.fullSuiteFallback,
+  });
+
+  // A capped VCS list may have dropped the only change that mattered, and a
+  // test-runner configuration change can alter discovery or bootstrap.
+  const configChanged = [...input.changed.files, ...input.changed.deleted].some(isTestConfig);
+  // A test-root PHP file that is not a `*Test.php` file (bootstrap, Pest.php,
+  // TestCase, fixtures) affects tests that cannot be named from its path.
+  const supportChanged = direct.some((file) => !file.endsWith("Test.php"));
+  if (input.changed.truncated || configChanged || supportChanged) return fallback(0);
+
+  if (deletedSources.length > 0) return fallback(0);
+  // A non-test PHP change outside the known source roots cannot be mapped or
+  // ruled out; run the full suite rather than silently skipping tests.
+  const unclassified = phpChanged.filter(
+    (file) => !underAny(file, testRoots) && !underAny(file, sourceRoots),
+  );
+  if (unclassified.length > 0) return fallback(0);
+  if (sourceChanged.length === 0) {
+    return direct.length > MAX_TARGETED_TESTS ? fallback(0) : directOnly();
+  }
+
+  const mapped = new Set<string>();
+  const missing: string[] = [];
+  for (const source of sourceChanged) {
+    const rel = relativeTo(source, sourceRoots);
+    if (!rel) {
+      missing.push(source);
+      continue;
+    }
+    const testName = rel.replace(/\.php$/, "Test.php");
+    const candidates = [
+      ...testRoots.map((testRoot) => `${testRoot}/${testName}`),
+      ...CONVENTION_DIRS.flatMap((dir) =>
+        testRoots.map((testRoot) => `${testRoot}/${dir}/${testName}`),
+      ),
+    ];
+    let found = false;
+    for (const candidate of candidates) {
+      if (await isFile(input.root, candidate)) {
+        mapped.add(candidate);
+        found = true;
+      }
+    }
+    if (!found) missing.push(source);
+  }
+
+  if (missing.length > 0) {
+    const index = await indexTestFiles(input.root, testRoots);
+    if (index.truncated) return fallback(mapped.size);
+    for (const source of missing) {
+      const name = `${basename(source).replace(/\.php$/, "")}Test.php`;
+      const candidates = index.byName.get(name) ?? [];
+      if (candidates.length === 0) return fallback(mapped.size);
+      for (const candidate of candidates) mapped.add(candidate);
+    }
+  }
+
+  for (const file of direct) mapped.add(file);
+  if (mapped.size > MAX_TARGETED_TESTS || mapped.size > MAX_SCOPE_FILES) {
+    return fallback(mapped.size);
+  }
+  const paths = [...mapped].sort((a, b) => a.localeCompare(b));
+  return {
+    mode: "targeted",
+    paths,
+    direct: direct.length,
+    mapped: paths.length - direct.length,
+    fallbackReason: null,
+  };
+}

@@ -49,6 +49,7 @@ describe("metrics v3", () => {
       cancelled: 0,
       findings: 0,
       lastRunAt: null,
+      lastStatus: null,
     });
     expect(metrics.scanner).toEqual({
       runs: 0,
@@ -95,6 +96,7 @@ describe("metrics v3", () => {
           cancelled: 1,
           findings: 7,
           lastRunAt: "2026-01-03T00:00:00.000Z",
+          lastStatus: "passed",
         },
         scanner: {
           runs: 2,
@@ -113,7 +115,7 @@ describe("metrics v3", () => {
     expect(metrics.routing.activations["php-testing"]).toMatchObject({ count: 3 });
     expect(metrics.routing.unactivated["php-security"]).toBe(2);
     expect(metrics.routing.taskGenerations).toBe(3);
-    expect(metrics.verification).toMatchObject({ runs: 6, failed: 1, findings: 7 });
+    expect(metrics.verification).toMatchObject({ runs: 6, failed: 1, findings: 7, lastStatus: "passed" });
     expect(metrics.scanner).toMatchObject({
       runs: 2,
       findings: 5,

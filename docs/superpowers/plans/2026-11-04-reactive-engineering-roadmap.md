@@ -53,8 +53,8 @@ Current plans:
 | Plan | Status | Path |
 | --- | --- | --- |
 | Phase 1 — Foundation | Created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-1-foundation.md` |
-| Phase 2 — Pattern Library and Architecture Behavior | Not created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-2-pattern-library.md` |
-| Phase 3 — Verification | Not created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-3-verification.md` |
+| Phase 2 — Pattern Library and Architecture Behavior | Created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-2-pattern-library.md` |
+| Phase 3 — Verification | Created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-3-verification.md` |
 | Phase 4 — Architect Surface and Diagnostics | Not created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-4-architect-surface.md` |
 | Phase 5 — Architecture Scanner | Not created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-5-scanner.md` |
 | Phase 6 — Drift Detection and Feedback | Deferred | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-6-drift.md` |
@@ -205,13 +205,13 @@ Deliverables:
 
 Exit gate:
 
-- [ ] Never passes production paths as test paths.
-- [ ] Never passes when changed scope cannot be determined; aggregate is `partial` or `unavailable` as appropriate.
-- [ ] Never installs tools or edits configuration.
-- [ ] Denied commands are reported as cancelled/unavailable, never bypassed.
-- [ ] Deptrac is used only when configured; otherwise architecture is `skipped: scanner-unavailable`.
-- [ ] Build/Design/Test tasks receive the completion reminder.
-- [ ] Evaluation shows improved completion reporting.
+- [x] Never passes production paths as test paths.
+- [x] Never passes when changed scope cannot be determined; aggregate is `partial` or `unavailable` as appropriate.
+- [x] Never installs tools or edits configuration.
+- [x] Denied commands are reported as cancelled/unavailable, never bypassed.
+- [x] Deptrac is used only when configured; otherwise architecture is `skipped: scanner-unavailable`.
+- [x] Build/Design/Test tasks receive the completion reminder.
+- [x] Evaluation shows improved completion reporting.
 
 ### Phase 4 — Architect Surface and Diagnostics (`0.5.0`)
 

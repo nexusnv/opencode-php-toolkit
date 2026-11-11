@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isAggregateStatus } from "../verify/types.js";
 export const METRICS_VERSION = 3;
 /** Counter dictionaries are prototype-free so arbitrary IDs are ordinary keys. */
 function counterRecord() {
@@ -42,6 +43,7 @@ export function emptyVerificationMetrics() {
         cancelled: 0,
         findings: 0,
         lastRunAt: null,
+        lastStatus: null,
     };
 }
 export function emptyScannerMetrics() {
@@ -205,6 +207,7 @@ function migrateVerification(raw) {
         result[key] = nonNegative(num(candidate[key]));
     }
     result.lastRunAt = typeof candidate.lastRunAt === "string" ? candidate.lastRunAt : null;
+    result.lastStatus = isAggregateStatus(candidate.lastStatus) ? candidate.lastStatus : null;
     return result;
 }
 function migrateScanner(raw) {
@@ -258,7 +261,13 @@ export function deserialize(raw, project) {
     };
 }
 function emptyDelta() {
-    return { tools: {}, commands: {}, triggerHits: 0, routing: emptyRoutingMetrics() };
+    return {
+        tools: {},
+        commands: {},
+        triggerHits: 0,
+        routing: emptyRoutingMetrics(),
+        verification: emptyVerificationMetrics(),
+    };
 }
 function isEmptyRouting(routing) {
     return (Object.keys(routing.selections).length === 0 &&
@@ -271,11 +280,27 @@ function isEmptyRouting(routing) {
         routing.continuations === 0 &&
         routing.resets === 0);
 }
+function isEmptyVerification(verification) {
+    return (verification.runs === 0 &&
+        verification.passed === 0 &&
+        verification.failed === 0 &&
+        verification.partial === 0 &&
+        verification.unavailable === 0 &&
+        verification.error === 0 &&
+        verification.warning === 0 &&
+        verification.skipped === 0 &&
+        verification.timedOut === 0 &&
+        verification.cancelled === 0 &&
+        verification.findings === 0 &&
+        verification.lastRunAt === null &&
+        verification.lastStatus === null);
+}
 function isEmptyDelta(delta) {
     return (delta.triggerHits === 0 &&
         Object.keys(delta.tools).length === 0 &&
         Object.keys(delta.commands).length === 0 &&
-        isEmptyRouting(delta.routing));
+        isEmptyRouting(delta.routing) &&
+        isEmptyVerification(delta.verification));
 }
 function later(a, b) {
     // Strictly greater: on a timestamp tie, b (the delta recorded later by
@@ -420,6 +445,25 @@ export function mergeDelta(a, b) {
         commands,
         triggerHits: a.triggerHits + b.triggerHits,
         routing: mergeRoutingMetrics(a.routing, b.routing),
+        verification: mergeVerification(a.verification, b.verification),
+    };
+}
+function mergeVerification(a, b) {
+    const laterRun = (a.lastRunAt ?? "") > (b.lastRunAt ?? "") ? a : b;
+    return {
+        runs: a.runs + b.runs,
+        passed: a.passed + b.passed,
+        failed: a.failed + b.failed,
+        partial: a.partial + b.partial,
+        unavailable: a.unavailable + b.unavailable,
+        error: a.error + b.error,
+        warning: a.warning + b.warning,
+        skipped: a.skipped + b.skipped,
+        timedOut: a.timedOut + b.timedOut,
+        cancelled: a.cancelled + b.cancelled,
+        findings: a.findings + b.findings,
+        lastRunAt: laterRun.lastRunAt,
+        lastStatus: laterRun.lastStatus ?? a.lastStatus ?? b.lastStatus,
     };
 }
 /** Applies pending increments to a document, producing the merged view. */
@@ -463,6 +507,7 @@ function applyDelta(base, delta) {
         commands,
         triggerHits: base.triggerHits + delta.triggerHits,
         routing: mergeRoutingMetrics(base.routing ?? emptyRoutingMetrics(), delta.routing),
+        verification: mergeVerification(base.verification ?? emptyVerificationMetrics(), delta.verification),
     };
 }
 /**
@@ -593,6 +638,26 @@ export class MetricsStore {
     }
     async recordRouting(event) {
         applyRoutingEvent(this.delta.routing, event, new Date().toISOString());
+        this.markDirty();
+    }
+    async recordVerification(input) {
+        const now = new Date().toISOString();
+        const verification = this.delta.verification;
+        verification.runs += 1;
+        verification[input.status] += 1;
+        for (const check of input.checks) {
+            if (check.status === "warning")
+                verification.warning += 1;
+            else if (check.status === "skipped")
+                verification.skipped += 1;
+            else if (check.status === "timed_out")
+                verification.timedOut += 1;
+            else if (check.status === "cancelled")
+                verification.cancelled += 1;
+        }
+        verification.findings += nonNegative(input.findings);
+        verification.lastRunAt = now;
+        verification.lastStatus = input.status;
         this.markDirty();
     }
     /**

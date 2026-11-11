@@ -1,6 +1,6 @@
-import { execFile } from "node:child_process";
 import { access } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { PERMISSION_APPROVAL_CODE, PERMISSION_DENIED_CODE, execFileRunner, isMissingBinary, } from "./runner.js";
 async function pathExists(path) {
     try {
         await access(path);
@@ -32,45 +32,40 @@ const PHP_PARSE_ERROR_EXIT = 255;
 /** `composer validate` exits 1 for a bad manifest, 3 when there is none. */
 const COMPOSER_INVALID_EXIT = 1;
 const COMPOSER_NO_MANIFEST_EXIT = 3;
-/** Reports (JUnit, analyzer JSON) can far exceed 1 MiB on large projects. */
-const MAX_REPORT_BUFFER = 64 * 1024 * 1024;
-function run(cmd, args, cwd, timeoutMs, signal) {
-    return new Promise((resolve) => {
-        if (signal?.aborted) {
-            // An already-aborted signal never fires its abort event, so the
-            // listener below would not stop the child - do not spawn at all.
-            resolve({ ok: false, stdout: "", stderr: "", code: "ABORT_ERR", killed: true });
-            return;
-        }
-        const child = execFile(cmd, args, { cwd, timeout: timeoutMs, maxBuffer: MAX_REPORT_BUFFER }, (err, stdout, stderr) => {
-            resolve({
-                ok: !err,
-                stdout: String(stdout ?? ""),
-                // Prefer the process's real stderr. Fall back to err.message only
-                // when the child said nothing (e.g. spawn failures) so tool output is
-                // not polluted with the generic "Command failed: ..." wrapper.
-                stderr: typeof stderr === "string" && stderr.length > 0
-                    ? String(stderr)
-                    : String(err?.message ?? ""),
-                code: err?.code ?? null,
-                // `killed` is set when we killed the child (timeout/abort); a child
-                // that died on its own reports a signal instead.
-                killed: Boolean(err?.killed ||
-                    err?.signal),
-            });
-        });
-        signal?.addEventListener("abort", () => {
-            try {
-                child.kill("SIGKILL");
-            }
-            catch {
-                // ignore
-            }
-        });
-    });
+const FAILURE_RANK = {
+    aborted: 5,
+    "timed-out": 4,
+    "permission-denied": 3,
+    "permission-approval-required": 2,
+    "missing-tool": 1,
+    execution: 0,
+};
+function worseFailure(a, b) {
+    if (!a)
+        return b;
+    if (!b)
+        return a;
+    return FAILURE_RANK[b] > FAILURE_RANK[a] ? b : a;
 }
-function isMissingBinary(result) {
-    return result.code === "ENOENT" || result.stderr.includes("command not found");
+function failureFromRun(result) {
+    if (result.aborted)
+        return "aborted";
+    if (result.killed)
+        return "timed-out";
+    if (result.code === PERMISSION_DENIED_CODE)
+        return "permission-denied";
+    if (result.code === PERMISSION_APPROVAL_CODE)
+        return "permission-approval-required";
+    if (isMissingBinary(result))
+        return "missing-tool";
+    return result.ok ? undefined : "execution";
+}
+function permissionFailure(result) {
+    if (result.code === PERMISSION_DENIED_CODE)
+        return "permission-denied";
+    if (result.code === PERMISSION_APPROVAL_CODE)
+        return "permission-approval-required";
+    return undefined;
 }
 /**
  * Parses an audit report.
@@ -106,7 +101,7 @@ export function parseAuditReport(stdout) {
 export function countAdvisories(stdout) {
     return parseAuditReport(stdout)?.advisories ?? 0;
 }
-export async function phpLint(paths, cwd, signal) {
+export async function phpLint(paths, cwd, signal, runner = execFileRunner) {
     const files = Array.isArray(paths) ? paths : [];
     if (!files.length) {
         return {
@@ -119,16 +114,25 @@ export async function phpLint(paths, cwd, signal) {
     let findings = 0;
     let linted = 0;
     let unreadable = 0;
+    let failure;
     for (const p of files.slice(0, 20)) {
-        const r = await run("php", ["-l", p], cwd, 15000, signal);
+        const r = await runner.run("php", ["-l", p], cwd, 15000, signal);
+        if (r.code === PERMISSION_DENIED_CODE || r.code === PERMISSION_APPROVAL_CODE) {
+            unreadable += 1;
+            out.push(`${p}: ${r.stderr}`);
+            failure = worseFailure(failure, permissionFailure(r));
+            continue;
+        }
         if (isMissingBinary(r)) {
             unreadable += 1;
             out.push(`${p}: php not found on PATH. Install PHP 8.1+ then retry.`);
+            failure = worseFailure(failure, "missing-tool");
             continue;
         }
         if (r.killed) {
             unreadable += 1;
             out.push(`${p}: lint timed out or was aborted.`);
+            failure = worseFailure(failure, r.aborted ? "aborted" : "timed-out");
             continue;
         }
         if (!r.ok && r.code !== PHP_PARSE_ERROR_EXIT) {
@@ -136,6 +140,7 @@ export async function phpLint(paths, cwd, signal) {
             // operational failure, not a problem in the user's code.
             unreadable += 1;
             out.push(`${p}: COULD NOT LINT\n${r.stdout}${r.stderr}`.trim());
+            failure = worseFailure(failure, failureFromRun(r) ?? "execution");
             continue;
         }
         linted += 1;
@@ -151,21 +156,36 @@ export async function phpLint(paths, cwd, signal) {
     const text = out.join("\n\n").slice(0, 20000) || "php_lint: empty result.";
     if (!linted || unreadable > 0) {
         // The tool did not complete everything it was asked to do.
-        return { text, status: "error", findings };
+        return { text, status: "error", findings, ...(failure ? { failure } : {}) };
     }
-    return { text, status: "ok", findings };
+    return { text, status: "ok", findings, ...(failure ? { failure } : {}) };
 }
-export async function composerValidate(cwd, signal) {
-    const r = await run("composer", ["validate", "--no-check-publish"], cwd, 30000, signal);
+export async function composerValidate(cwd, signal, runner = execFileRunner) {
+    const r = await runner.run("composer", ["validate", "--no-check-publish"], cwd, 30000, signal);
+    const permission = permissionFailure(r);
+    if (permission) {
+        return {
+            text: `composer validate could not run:\n${r.stderr}`,
+            status: "error",
+            findings: 0,
+            failure: permission,
+        };
+    }
     if (isMissingBinary(r)) {
         return {
             text: "composer not found on PATH. Install from https://getcomposer.org/download/ then retry.",
             status: "error",
             findings: 0,
+            failure: "missing-tool",
         };
     }
     if (r.killed) {
-        return { text: "composer validate timed out or was aborted.", status: "error", findings: 0 };
+        return {
+            text: "composer validate timed out or was aborted.",
+            status: "error",
+            findings: 0,
+            failure: r.aborted ? "aborted" : "timed-out",
+        };
     }
     const text = `${r.ok ? "composer validate: OK" : "composer validate: FAIL"}\n${r.stdout}\n${r.stderr}`
         .trim()
@@ -180,10 +200,10 @@ export async function composerValidate(cwd, signal) {
         // The manifest is broken - a finding, not a tool error.
         return { text, status: "ok", findings: 1 };
     }
-    return { text, status: "error", findings: 0 };
+    return { text, status: "error", findings: 0, failure: "execution" };
 }
 export async function composerAudit(cwd, signal) {
-    const r = await run("composer", ["audit", "--format=json"], cwd, 60000, signal);
+    const r = await execFileRunner.run("composer", ["audit", "--format=json"], cwd, 60000, signal);
     if (isMissingBinary(r)) {
         return {
             text: `composer audit could not run:\n${r.stderr.slice(0, 2000) || "composer not found on PATH."}\nHint: needs composer.json + network. Run \`composer validate\` first.`,
@@ -307,7 +327,7 @@ export function parsePsalmReport(stdout) {
     }
     return { findings: issues.length, lines };
 }
-export async function phpStaticAnalysis(rawCwd, signal, selection = "auto") {
+export async function phpStaticAnalysis(rawCwd, signal, selection = "auto", options = {}) {
     // Resolve once: the vendor binaries are joined onto this path AND it is
     // the child cwd, so a relative input must not be applied twice.
     const cwd = resolve(rawCwd);
@@ -325,12 +345,33 @@ export async function phpStaticAnalysis(rawCwd, signal, selection = "auto") {
             text: `php_static_analysis: no analyzer found. Install ${want} as a dev dependency, run \`composer install\`, then retry.`,
             status: "error",
             findings: 0,
+            failure: "missing-tool",
         };
     }
+    const runner = options.runner ?? execFileRunner;
+    const paths = options.paths && options.paths.length > 0 ? options.paths : [];
     if (kind === "phpstan") {
-        const r = await run(phpstanBin, ["analyse", "--no-progress", "--error-format=json"], cwd, 300000, signal);
-        if (r.killed)
-            return { text: "phpstan timed out or was aborted.", status: "error", findings: 0 };
+        const r = await runner.run(phpstanBin, ["analyse", "--no-progress", "--error-format=json", ...paths], cwd, 300000, signal);
+        const permission = permissionFailure(r);
+        if (permission) {
+            return { text: `phpstan could not run:\n${r.stderr}`, status: "error", findings: 0, failure: permission };
+        }
+        if (isMissingBinary(r)) {
+            return {
+                text: `phpstan could not run:\n${r.stderr.slice(0, 4000)}`,
+                status: "error",
+                findings: 0,
+                failure: "missing-tool",
+            };
+        }
+        if (r.killed) {
+            return {
+                text: "phpstan timed out or was aborted.",
+                status: "error",
+                findings: 0,
+                failure: r.aborted ? "aborted" : "timed-out",
+            };
+        }
         const report = parsePhpStanReport(r.stdout);
         if (!report) {
             // phpstan exits 0 when clean (it emits no JSON then), 1 when it finds
@@ -341,6 +382,7 @@ export async function phpStaticAnalysis(rawCwd, signal, selection = "auto") {
                 text: `phpstan could not run:\n${`${r.stdout}\n${r.stderr}`.trim().slice(0, 4000)}`,
                 status: "error",
                 findings: 0,
+                failure: "execution",
             };
         }
         const listed = report.lines.join("\n");
@@ -351,9 +393,27 @@ export async function phpStaticAnalysis(rawCwd, signal, selection = "auto") {
             findings: report.findings,
         };
     }
-    const r = await run(psalmBin, ["--no-cache", "--no-progress", "--output-format=json"], cwd, 300000, signal);
-    if (r.killed)
-        return { text: "psalm timed out or was aborted.", status: "error", findings: 0 };
+    const r = await runner.run(psalmBin, ["--no-cache", "--no-progress", "--output-format=json", ...paths], cwd, 300000, signal);
+    const permission = permissionFailure(r);
+    if (permission) {
+        return { text: `psalm could not run:\n${r.stderr}`, status: "error", findings: 0, failure: permission };
+    }
+    if (isMissingBinary(r)) {
+        return {
+            text: `psalm could not run:\n${r.stderr.slice(0, 4000)}`,
+            status: "error",
+            findings: 0,
+            failure: "missing-tool",
+        };
+    }
+    if (r.killed) {
+        return {
+            text: "psalm timed out or was aborted.",
+            status: "error",
+            findings: 0,
+            failure: r.aborted ? "aborted" : "timed-out",
+        };
+    }
     const report = parsePsalmReport(r.stdout);
     if (!report) {
         if (r.ok)
@@ -362,6 +422,7 @@ export async function phpStaticAnalysis(rawCwd, signal, selection = "auto") {
             text: `psalm could not run:\n${`${r.stdout}\n${r.stderr}`.trim().slice(0, 4000)}`,
             status: "error",
             findings: 0,
+            failure: "execution",
         };
     }
     const listed = report.lines.join("\n");
@@ -413,13 +474,110 @@ export function parseJUnitReport(stdout) {
         failing,
     };
 }
+function formatTestOutcome(kind, summary) {
+    const skipped = summary.skipped > 0 ? `, ${summary.skipped} skipped` : "";
+    const failing = summary.failing.length ? `\n${summary.failing.join("\n")}` : "";
+    return {
+        text: `${kind}: ${summary.tests} test(s), ${summary.assertions} assertions, ${summary.failures} failures, ${summary.errors} errors${skipped}${failing}`.slice(0, 16000),
+        status: "ok",
+        findings: summary.failures + summary.errors,
+        kind,
+        summary,
+    };
+}
+async function runTestCommand(binary, kind, args, cwd, timeout, signal, runner) {
+    const r = await runner.run(binary, args, cwd, timeout, signal);
+    const permission = permissionFailure(r);
+    if (permission) {
+        return {
+            text: `php_test: could not execute the ${kind} binary.\n${r.stderr}`.trim(),
+            status: "error",
+            findings: 0,
+            failure: permission,
+            kind,
+            summary: null,
+        };
+    }
+    if (r.killed) {
+        return {
+            text: "php_test: the test run timed out or was aborted.",
+            status: "error",
+            findings: 0,
+            failure: r.aborted ? "aborted" : "timed-out",
+            kind,
+            summary: null,
+        };
+    }
+    if (isMissingBinary(r) || (!r.ok && r.code === null)) {
+        return {
+            text: `php_test: could not execute the ${kind} binary.\n${r.stderr}`.trim(),
+            status: "error",
+            findings: 0,
+            failure: isMissingBinary(r) ? "missing-tool" : "execution",
+            kind,
+            summary: null,
+        };
+    }
+    const summary = parseJUnitReport(r.stdout);
+    if (!summary) {
+        // exit 2/config errors produce prose, not JUnit - that is an operational failure.
+        if (!r.ok) {
+            return {
+                text: `php_test: the runner failed.\n${`${r.stdout}\n${r.stderr}`.trim().slice(0, 4000)}`,
+                status: "error",
+                findings: 0,
+                failure: "execution",
+                kind,
+                summary: null,
+            };
+        }
+        return {
+            text: `${kind}: exited 0, but no parseable JUnit report was produced - cannot confirm tests actually ran (a filter may have matched nothing).\n${r.stdout.slice(0, 2000)}`.trim(),
+            status: "ok",
+            findings: 0,
+            kind,
+            summary: null,
+        };
+    }
+    return formatTestOutcome(kind, summary);
+}
+function mergeTestOutcomes(kind, outcomes) {
+    const findings = outcomes.reduce((total, outcome) => total + outcome.findings, 0);
+    const text = outcomes.map((outcome) => outcome.text).join("\n").slice(0, 16000);
+    const summaries = outcomes.map((outcome) => outcome.summary);
+    if (summaries.some((summary) => summary === null)) {
+        return { text, status: "ok", findings, kind, summary: null };
+    }
+    const summary = {
+        tests: 0,
+        assertions: 0,
+        failures: 0,
+        errors: 0,
+        skipped: 0,
+        failing: [],
+    };
+    for (const part of summaries) {
+        summary.tests += part.tests;
+        summary.assertions += part.assertions;
+        summary.failures += part.failures;
+        summary.errors += part.errors;
+        summary.skipped += part.skipped;
+        summary.failing.push(...part.failing);
+    }
+    summary.failing = summary.failing.slice(0, 20);
+    return formatTestOutcome(kind, summary);
+}
 /**
  * Runs the project's test suite via `vendor/bin/pest` or `vendor/bin/phpunit`.
  * The vendor binary is the only allowed entry point (never a bare PATH
  * binary), the working directory is explicit, and the run is time-boxed and
- * abortable. Failing tests are findings, not a tool error.
+ * abortable. Failing tests are findings, not a tool error. The structured
+ * summary lets `php_verify` report counts without re-parsing the text.
+ *
+ * PHPUnit (and Pest) only executes the first positional test path. Selected
+ * test files are therefore run one at a time, sharing a single 300s budget.
  */
-export async function phpTest(rawCwd, signal, filter) {
+export async function runTestSuite(rawCwd, signal, filter, options = {}) {
     // Resolve once: the vendor binaries are joined onto this path AND it is
     // the child cwd, so a relative input must not be applied twice.
     const cwd = resolve(rawCwd);
@@ -433,45 +591,43 @@ export async function phpTest(rawCwd, signal, filter) {
             text: "php_test: no vendor/bin/pest or vendor/bin/phpunit found. Install the dev dependencies (composer require --dev pestphp/pest or phpunit/phpunit) and retry. Tests are never run from a bare PATH binary.",
             status: "error",
             findings: 0,
+            failure: "missing-tool",
+            kind: null,
+            summary: null,
         };
     }
-    const args = ["--log-junit", "php://stdout"];
+    const baseArgs = ["--log-junit", "php://stdout"];
     if (filter)
-        args.push("--filter", filter);
-    const r = await run(binary, args, cwd, 300000, signal);
-    if (isMissingBinary(r) || (!r.ok && r.code === null)) {
-        return {
-            text: `php_test: could not execute the ${kind} binary.\n${r.stderr}`.trim(),
-            status: "error",
-            findings: 0,
-        };
+        baseArgs.push("--filter", filter);
+    const runner = options.runner ?? execFileRunner;
+    const selected = options.paths ?? [];
+    if (selected.length <= 1) {
+        return runTestCommand(binary, kind, [...baseArgs, ...selected], cwd, 300000, signal, runner);
     }
-    if (r.killed) {
-        return { text: "php_test: the test run timed out or was aborted.", status: "error", findings: 0 };
-    }
-    const summary = parseJUnitReport(r.stdout);
-    if (!summary) {
-        // exit 2/config errors produce prose, not JUnit - that is an operational failure.
-        if (!r.ok) {
+    const deadline = Date.now() + 300_000;
+    const outcomes = [];
+    for (const path of selected) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
             return {
-                text: `php_test: the runner failed.\n${`${r.stdout}\n${r.stderr}`.trim().slice(0, 4000)}`,
+                text: "php_test: the targeted test run exceeded its 300s budget.",
                 status: "error",
                 findings: 0,
+                failure: "timed-out",
+                kind,
+                summary: null,
             };
         }
-        return {
-            text: `${kind}: exited 0, but no parseable JUnit report was produced - cannot confirm tests actually ran (a filter may have matched nothing).\n${r.stdout.slice(0, 2000)}`.trim(),
-            status: "ok",
-            findings: 0,
-        };
+        const outcome = await runTestCommand(binary, kind, [...baseArgs, path], cwd, remaining, signal, runner);
+        if (outcome.status === "error")
+            return outcome;
+        outcomes.push(outcome);
     }
-    const skipped = summary.skipped > 0 ? `, ${summary.skipped} skipped` : "";
-    const failing = summary.failing.length ? `\n${summary.failing.join("\n")}` : "";
-    return {
-        text: `${kind}: ${summary.tests} test(s), ${summary.assertions} assertions, ${summary.failures} failures, ${summary.errors} errors${skipped}${failing}`.slice(0, 16000),
-        status: "ok",
-        findings: summary.failures + summary.errors,
-    };
+    return mergeTestOutcomes(kind, outcomes);
+}
+export async function phpTest(rawCwd, signal, filter) {
+    const { text, status, findings, failure } = await runTestSuite(rawCwd, signal, filter);
+    return { text, status, findings, ...(failure ? { failure } : {}) };
 }
 /** Parses `composer outdated --direct --format=json`. */
 export function parseOutdated(stdout) {
@@ -511,7 +667,7 @@ export function parseOutdated(stdout) {
     return out;
 }
 export async function composerOutdated(cwd, signal) {
-    const r = await run("composer", ["outdated", "--direct", "--format=json"], cwd, 120000, signal);
+    const r = await execFileRunner.run("composer", ["outdated", "--direct", "--format=json"], cwd, 120000, signal);
     if (isMissingBinary(r)) {
         return {
             text: `composer outdated could not run:\n${r.stderr.slice(0, 2000) || "composer not found on PATH."}`,

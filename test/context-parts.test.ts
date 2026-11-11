@@ -3,6 +3,47 @@ import { removePhpToolkitParts, renderToolkitStatePart } from "../src/context/pa
 import { RoutingRenderContexts } from "../src/routing/state.js";
 
 describe("context parts", () => {
+  function state(intents: string[]): never {
+    return {
+      taskGeneration: 1,
+      mode: "risk",
+      activeIntents: intents,
+      activeConcerns: [],
+      selectedSkills: [],
+      attachedSkills: [],
+      activatedSkills: new Set(),
+      unactivatedSkills: [],
+    } as never;
+  }
+
+  it("reminds Build, Design and Test tasks to verify", () => {
+    for (const intent of ["Build", "Design", "Test"]) {
+      const text = renderToolkitStatePart(
+        { profile: { type: "application", frameworkHints: ["none"] } as never, state: state([intent]) },
+        { verification: "remind" },
+      );
+      expect(text).toContain("Before declaring completion: run php_verify");
+    }
+  });
+
+  it("does not remind Review, Debug or Maintain tasks", () => {
+    for (const intent of ["Review", "Debug", "Maintain"]) {
+      const text = renderToolkitStatePart(
+        { profile: { type: "application", frameworkHints: ["none"] } as never, state: state([intent]) },
+        { verification: "remind" },
+      );
+      expect(text).not.toContain("php_verify");
+    }
+  });
+
+  it("removes the reminder when verification is off", () => {
+    const text = renderToolkitStatePart(
+      { profile: { type: "application", frameworkHints: ["none"] } as never, state: state(["Build"]) },
+      { verification: "off" },
+    );
+    expect(text).not.toContain("php_verify");
+  });
+
   it("removes prior php-toolkit system parts only", () => {
     const input = [
       { type: "text", text: "keep me" },

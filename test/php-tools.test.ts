@@ -15,7 +15,9 @@ import {
   phpLint,
   phpStaticAnalysis,
   phpTest,
+  runTestSuite,
 } from "../src/tools/php-tools.js";
+import { PERMISSION_DENIED_CODE, type CommandRunner } from "../src/tools/runner.js";
 
 /**
  * The tool tests drive fake `php` and `composer` executables so the suite
@@ -418,6 +420,87 @@ describe("phpTest", () => {
     } finally {
       process.chdir(prevCwd);
     }
+  });
+});
+
+describe("runTestSuite", () => {
+  const runner = (stdout: string, overrides: Partial<Awaited<ReturnType<CommandRunner["run"]>>> = {}): CommandRunner => ({
+    run: async () => ({ ok: true, stdout, stderr: "", code: 0, killed: false, aborted: false, ...overrides }),
+  });
+
+  it("passes explicit test paths to the vendor runner", async () => {
+    const dir = workspace({ "vendor/bin/phpunit": FAKE_PHPUNIT_CLEAN });
+    let argv: readonly string[] = [];
+    const outcome = await runTestSuite(dir, undefined, undefined, {
+      runner: {
+        run: async (_cmd, args) => {
+          argv = args;
+          return { ok: true, stdout: "", stderr: "", code: 0, killed: false, aborted: false };
+        },
+      },
+      paths: ["tests/CalculatorTest.php"],
+    });
+    expect(argv).toEqual(["--log-junit", "php://stdout", "tests/CalculatorTest.php"]);
+    expect(outcome.kind).toBe("phpunit");
+  });
+
+  it("returns the structured JUnit summary", async () => {
+    const dir = workspace({ "vendor/bin/phpunit": FAKE_PHPUNIT_CLEAN });
+    const outcome = await runTestSuite(dir, undefined, undefined, {
+      runner: runner('<testsuites><testsuite tests="4" assertions="9" failures="1" errors="0" skipped="2"></testsuite></testsuites>'),
+    });
+    expect(outcome).toMatchObject({
+      status: "ok",
+      findings: 1,
+      kind: "phpunit",
+      summary: { tests: 4, assertions: 9, failures: 1, errors: 0, skipped: 2 },
+    });
+  });
+
+  it("maps a permission denial without executing the suite", async () => {
+    const dir = workspace({ "vendor/bin/phpunit": FAKE_PHPUNIT_CLEAN });
+    const outcome = await runTestSuite(dir, undefined, undefined, {
+      runner: runner("", { ok: false, code: PERMISSION_DENIED_CODE, stderr: "permission:denied" }),
+    });
+    expect(outcome).toMatchObject({ status: "error", failure: "permission-denied", summary: null });
+  });
+
+  it("runs every selected test path separately and aggregates the results", async () => {
+    const dir = workspace({ "vendor/bin/phpunit": FAKE_PHPUNIT_CLEAN });
+    const calls: string[][] = [];
+    const outcome = await runTestSuite(dir, undefined, undefined, {
+      paths: ["tests/ATest.php", "tests/BTest.php"],
+      runner: {
+        run: async (_cmd, args) => {
+          calls.push([...args]);
+          const failing = args.at(-1) === "tests/BTest.php";
+          return {
+            ok: true,
+            stdout: `<testsuites><testsuite tests="1" assertions="1" failures="${failing ? 1 : 0}" errors="0" skipped="0"></testsuite></testsuites>`,
+            stderr: "",
+            code: 0,
+            killed: false,
+            aborted: false,
+          };
+        },
+      },
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toContain("tests/ATest.php");
+    expect(calls[1]).toContain("tests/BTest.php");
+    expect(outcome).toMatchObject({
+      status: "ok",
+      findings: 1,
+      summary: { tests: 2, failures: 1 },
+    });
+  });
+
+  it("classifies a killed run with no exit code as timed out", async () => {
+    const dir = workspace({ "vendor/bin/phpunit": FAKE_PHPUNIT_CLEAN });
+    const outcome = await runTestSuite(dir, undefined, undefined, {
+      runner: runner("", { ok: false, code: null, killed: true, aborted: false }),
+    });
+    expect(outcome).toMatchObject({ status: "error", failure: "timed-out" });
   });
 });
 
