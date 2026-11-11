@@ -41,6 +41,17 @@ describe("evaluateCommand", () => {
       evaluateCommand(rules, "/repo/vendor/bin/phpstan", ["analyse"], "/repo").decision,
     ).toBe("allow");
   });
+
+  it("matches vendor basenames with their arguments", () => {
+    const deny = [rule("bash", "phpunit *", "deny")];
+    expect(
+      evaluateCommand(deny, "/repo/vendor/bin/phpunit", ["--log-junit", "php://stdout"], "/repo").decision,
+    ).toBe("deny");
+    const ask = [rule("bash", "phpstan analyse *", "ask")];
+    expect(
+      evaluateCommand(ask, "/repo/vendor/bin/phpstan", ["analyse", "src"], "/repo").decision,
+    ).toBe("approval-required");
+  });
 });
 
 describe("commandRules", () => {

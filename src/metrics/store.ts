@@ -627,7 +627,7 @@ function mergeVerification(a: VerificationMetrics, b: VerificationMetrics): Veri
     cancelled: a.cancelled + b.cancelled,
     findings: a.findings + b.findings,
     lastRunAt: laterRun.lastRunAt,
-    lastStatus: laterRun.lastStatus,
+    lastStatus: laterRun.lastStatus ?? a.lastStatus ?? b.lastStatus,
   };
 }
 

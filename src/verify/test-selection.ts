@@ -1,7 +1,12 @@
 import { readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { ProjectProfile } from "../profile.js";
-import { MAX_SCOPE_FILES, toPosix, type ChangedScope } from "./changed.js";
+import {
+  MAX_SCOPE_FILES,
+  containedConfiguredRoots,
+  normalizeConfiguredRoot,
+  type ChangedScope,
+} from "./changed.js";
 import { REASONS } from "./types.js";
 
 /** Bounded scan for `*Test.php` files under the test roots. */
@@ -44,12 +49,18 @@ async function findRoots(
   configured: readonly string[],
   conventional: readonly string[],
 ): Promise<string[]> {
-  const roots = [...new Set(configured.map((dir) => toPosix(dir).replace(/\/$/, "")).filter(Boolean))];
-  if (roots.length > 0) return roots;
+  const roots = configured.filter((dir) => normalizeConfiguredRoot(dir) !== "");
+  if (roots.length > 0) {
+    return (await containedConfiguredRoots(root, roots)).roots;
+  }
   const present = await Promise.all(
     conventional.map(async (name) => ((await existingDir(root, name)) ? name : null)),
   );
-  return present.filter((name): name is string => name !== null);
+  const contained = await containedConfiguredRoots(
+    root,
+    present.filter((name): name is string => name !== null),
+  );
+  return contained.roots;
 }
 
 async function isFile(root: string, rel: string): Promise<boolean> {
@@ -58,6 +69,16 @@ async function isFile(root: string, rel: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function isTestConfig(file: string): boolean {
+  const name = basename(file);
+  return (
+    name === "phpunit.xml" ||
+    name === "phpunit.xml.dist" ||
+    name === "phpunit.dist.xml" ||
+    name === "pest.xml"
+  );
 }
 
 interface TestIndex {
@@ -116,7 +137,7 @@ export async function selectTests(input: {
     (file) => !underAny(file, testRoots) && underAny(file, sourceRoots),
   );
   const deletedSources = input.changed.deleted.filter(
-    (file) => file.endsWith(".php") && !underAny(file, testRoots) && underAny(file, sourceRoots),
+    (file) => file.endsWith(".php") && !underAny(file, testRoots),
   );
   const directOnly = (): TestSelection => ({
     mode: direct.length > 0 ? "targeted" : "none",
@@ -133,6 +154,14 @@ export async function selectTests(input: {
     fallbackReason: REASONS.fullSuiteFallback,
   });
 
+  // A capped VCS list may have dropped the only change that mattered, and a
+  // test-runner configuration change can alter discovery or bootstrap.
+  const configChanged = [...input.changed.files, ...input.changed.deleted].some(isTestConfig);
+  // A test-root PHP file that is not a `*Test.php` file (bootstrap, Pest.php,
+  // TestCase, fixtures) affects tests that cannot be named from its path.
+  const supportChanged = direct.some((file) => !file.endsWith("Test.php"));
+  if (input.changed.truncated || configChanged || supportChanged) return fallback(0);
+
   if (deletedSources.length > 0) return fallback(0);
   // A non-test PHP change outside the known source roots cannot be mapped or
   // ruled out; run the full suite rather than silently skipping tests.
@@ -140,7 +169,9 @@ export async function selectTests(input: {
     (file) => !underAny(file, testRoots) && !underAny(file, sourceRoots),
   );
   if (unclassified.length > 0) return fallback(0);
-  if (sourceChanged.length === 0) return directOnly();
+  if (sourceChanged.length === 0) {
+    return direct.length > MAX_TARGETED_TESTS ? fallback(0) : directOnly();
+  }
 
   const mapped = new Set<string>();
   const missing: string[] = [];

@@ -463,7 +463,7 @@ function mergeVerification(a, b) {
         cancelled: a.cancelled + b.cancelled,
         findings: a.findings + b.findings,
         lastRunAt: laterRun.lastRunAt,
-        lastStatus: laterRun.lastStatus,
+        lastStatus: laterRun.lastStatus ?? a.lastStatus ?? b.lastStatus,
     };
 }
 /** Applies pending increments to a document, producing the merged view. */

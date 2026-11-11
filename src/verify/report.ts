@@ -75,19 +75,48 @@ export function renderVerificationReport(input: {
   if (input.permissionNote) lines.push(`Permission: ${input.permissionNote}`);
   if (checks.length === 0) {
     lines.push("", "Summary: unavailable — no checks were requested.", nextLine("unavailable"));
-  } else {
-    lines.push("");
-    for (const result of checks) {
-      const reason = result.reason ? ` (${result.reason})` : "";
-      lines.push(`${ICONS[result.status]} ${result.check.padEnd(12)} ${result.summary}${reason}`);
-      lines.push(...detailLines(result));
-    }
-    lines.push("", summaryLine(checks, status), nextLine(status));
+    return { text: lines.join("\n").slice(0, MAX_VERIFICATION_CHARS), status, findings };
   }
-  let text = lines.join("\n");
+
+  const rows: string[] = [];
+  const details: string[][] = [];
+  for (const result of checks) {
+    const reason = result.reason ? ` (${result.reason})` : "";
+    rows.push(`${ICONS[result.status]} ${result.check.padEnd(12)} ${result.summary}${reason}`);
+    details.push(detailLines(result));
+  }
+  const summary = ["", summaryLine(checks, status), nextLine(status)];
+  const notice = "\n[report truncated at 24,000 characters]";
+  // Rows and the aggregate summary are never dropped; only detail is cut.
+  const reserved = [...lines, "", ...rows, ...summary].join("\n").length;
+  let budget = MAX_VERIFICATION_CHARS - notice.length - reserved;
+  let truncated = false;
+  const body = [...lines, ""];
+  for (let index = 0; index < rows.length; index += 1) {
+    body.push(rows[index]);
+    for (const line of details[index]) {
+      if (budget <= 0) {
+        truncated = true;
+        break;
+      }
+      const cost = line.length + 1;
+      if (cost <= budget) {
+        body.push(line);
+        budget -= cost;
+        continue;
+      }
+      const room = budget - 1;
+      if (room > 20) body.push(`${line.slice(0, room - 1)}…`);
+      truncated = true;
+      budget = 0;
+      break;
+    }
+  }
+  body.push(...summary);
+  let text = body.join("\n");
+  if (truncated) text += notice;
   if (text.length > MAX_VERIFICATION_CHARS) {
-    const notice = "\n[report truncated at 24,000 characters]";
-    text = text.slice(0, MAX_VERIFICATION_CHARS - notice.length) + notice;
+    text = text.slice(0, MAX_VERIFICATION_CHARS);
   }
   return { text, status, findings };
 }

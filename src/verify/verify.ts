@@ -10,6 +10,8 @@ import { staticCheck } from "./checks/static.js";
 import { styleCheck, styleTool } from "./checks/style.js";
 import { testsCheck, testsDetected } from "./checks/tests.js";
 import {
+  canonicalVerificationRoot,
+  findWorktreeRoot,
   listProjectPhpFiles,
   normalizeVcsStatus,
   pathsOverride,
@@ -96,9 +98,10 @@ async function readChangedScope(
 ): Promise<ChangedScope> {
   try {
     const status = await deps.vcsStatus(root);
-    return normalizeVcsStatus(root, status.data ?? []);
+    const worktreeRoot = await findWorktreeRoot(root);
+    return normalizeVcsStatus(root, status.data ?? [], worktreeRoot);
   } catch {
-    return { source: "unavailable", files: [], deleted: [], note: null };
+    return { source: "unavailable", files: [], deleted: [], truncated: false, note: null };
   }
 }
 
@@ -128,11 +131,15 @@ export async function phpVerify(
 
   const rootResult = resolveVerificationRoot(deps.sessionRoot, input.directory);
   if ("error" in rootResult) return errorReport(scope, rootResult.error);
-  const root = rootResult.root;
+  const canonical = await canonicalVerificationRoot(deps.sessionRoot, rootResult.root);
+  if ("error" in canonical) return errorReport(scope, canonical.error);
+  const root = canonical.root;
   const profile = await deps.profileFor(root);
 
   const provided =
-    input.paths && input.paths.length > 0 ? pathsOverride(root, input.paths) : null;
+    input.paths && input.paths.length > 0
+      ? await pathsOverride(root, input.paths, root)
+      : null;
   if (provided && "error" in provided) return errorReport(scope, provided.error);
 
   const notes: string[] = [];
@@ -145,7 +152,7 @@ export async function phpVerify(
     changed =
       scope === "changed"
         ? await readChangedScope(deps, root)
-        : { source: "vcs", files: [], deleted: [], note: null };
+        : { source: "vcs", files: [], deleted: [], truncated: false, note: null };
     files = provided.files;
     if (provided.ignored > 0) notes.push(`${provided.ignored} non-PHP path(s) ignored`);
     if (scope === "changed") {
@@ -156,10 +163,15 @@ export async function phpVerify(
       }
     }
   } else if (scope === "all") {
-    changed = { source: "vcs", files: [], deleted: [], note: null };
+    changed = { source: "vcs", files: [], deleted: [], truncated: false, note: null };
     const list = await listProjectPhpFiles(root, profile);
     files = list.files;
     if (list.truncated) notes.push(`scope truncated to ${files.length} PHP files`);
+    if (list.outsideRoots > 0) {
+      notes.push(
+        `${list.outsideRoots} source/test root(s) outside the verification root were ignored`,
+      );
+    }
   } else {
     changed = await readChangedScope(deps, root);
     files = changed.files.filter((file) => file.endsWith(".php"));
@@ -228,6 +240,7 @@ export async function phpVerify(
           scope,
           changed,
           files,
+          pathOverride: provided !== null,
           runner: gated,
           signal: deps.signal,
         }),

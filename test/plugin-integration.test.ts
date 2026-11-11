@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { serializeStorageState } from "../src/routing/persistence.js";
 import plugin from "../src/index.js";
@@ -17,6 +18,7 @@ interface FakeOverrides {
   events?: Array<{ type: string; data: any }>;
   storageSeed?: Record<string, unknown>;
   vcs?: { data: Array<{ file: string; status: "added" | "deleted" | "modified" }> };
+  sessionGetError?: string;
 }
 
 async function waitFor(predicate: () => Promise<boolean>, timeout = 1000): Promise<void> {
@@ -81,6 +83,7 @@ function fakePluginContext(overrides: FakeOverrides = {}) {
     options: overrides.options ?? { autoSkills: "attach" },
     session: {
       get: async (input: { sessionID: string }) => {
+        if (overrides.sessionGetError) throw new Error(overrides.sessionGetError);
         const directory = overrides.roots?.[input.sessionID] ?? defaultRoot;
         return {
           id: input.sessionID,
@@ -663,6 +666,50 @@ describe("plugin routing integration", () => {
     );
     expect(result.content).toContain("PHP verification (scope: changed)");
     expect(result.content).toContain("composer");
+    await cleanup();
+  });
+
+  it("fails closed when the session cannot be resolved", async () => {
+    const { fake, cleanup } = await setupPlugin({
+      sessionGetError: "session store unavailable",
+      vcs: { data: [] },
+    });
+    const verify = fake.tools.find((tool) => tool.name === "verify")!;
+    const result = await verify.execute(
+      { scope: "changed", checks: ["tests"] },
+      { signal: new AbortController().signal, sessionID: "s1" },
+    );
+    expect(result.content).toContain("could not resolve the session");
+    expect(result.content).toContain("Verification was not run");
+    await cleanup();
+  });
+
+  it("attributes php_verify metrics to the session root, not the plugin root", async () => {
+    const sessionRoot = realpathSync(resolve("fixtures/php-app"));
+    const { fake, cleanup } = await setupPlugin({
+      vcs: { data: [] },
+      roots: { s1: sessionRoot },
+    });
+    const verify = fake.tools.find((tool) => tool.name === "verify")!;
+    await verify.execute(
+      { scope: "changed", checks: ["composer"] },
+      { signal: new AbortController().signal, sessionID: "s1" },
+    );
+    // Flushes every store this process holds, including the session project's.
+    const metricsTool = fake.tools.find((tool) => tool.name === "metrics")!;
+    await metricsTool.execute(
+      { export: true },
+      { signal: new AbortController().signal, sessionID: "s1" },
+    );
+    const documents = [...fake.storageEntries.values()] as Array<{
+      projectPath?: string;
+      tools?: Record<string, { runs?: number }>;
+      verification?: { runs?: number };
+    }>;
+    const sessionDocs = documents.filter((doc) => doc?.projectPath === sessionRoot);
+    expect(sessionDocs).toHaveLength(1);
+    expect(sessionDocs[0].tools?.php_verify?.runs).toBe(1);
+    expect(sessionDocs[0].verification?.runs).toBe(1);
     await cleanup();
   });
 });

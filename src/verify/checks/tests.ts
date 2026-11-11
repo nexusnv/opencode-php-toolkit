@@ -30,13 +30,23 @@ function mapTests(
   if (failure) return failure;
   let result: CheckResult;
   if (!outcome.summary) {
-    result = warning(
-      "tests",
-      REASONS.noTestReport,
-      `runner exited 0 without a JUnit report (${mode})`,
-      0,
-      outcome.text,
-    );
+    // A merged multi-file run can have findings from one file and no report
+    // from another; never downgrade known failures to a warning.
+    result =
+      outcome.findings > 0
+        ? failed(
+            "tests",
+            `${outcome.findings} failing (${mode}; incomplete report)`,
+            outcome.findings,
+            outcome.text,
+          )
+        : warning(
+            "tests",
+            REASONS.noTestReport,
+            `runner exited 0 without a JUnit report (${mode})`,
+            0,
+            outcome.text,
+          );
   } else if (outcome.summary.failures + outcome.summary.errors > 0) {
     const failing = outcome.summary.failures + outcome.summary.errors;
     result = failed("tests", `${failing} failing (${mode})`, failing, outcome.text);

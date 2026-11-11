@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -23,7 +23,7 @@ function tree(files: string[]): string {
 }
 
 function changed(files: string[], deleted: string[] = []): ChangedScope {
-  return { source: "vcs", files, deleted, note: null };
+  return { source: "vcs", files, deleted, truncated: false, note: null };
 }
 
 describe("selectTests", () => {
@@ -135,6 +135,86 @@ describe("selectTests", () => {
       root,
       profile: { layout: { sourceRoots: [], testRoots: ["tests"] } } as unknown as ProjectProfile,
       changed: changed(["lib/A.php"]),
+    });
+    expect(result.mode).toBe("full-suite");
+    expect(result.fallbackReason).toBe("tests:full-suite-fallback");
+  });
+
+  it("normalizes Composer-style ./ roots before matching", async () => {
+    const root = tree(["src/A.php", "tests/ATest.php"]);
+    const result = await selectTests({
+      root,
+      profile: { layout: { sourceRoots: ["./src/"], testRoots: ["./tests/"] } } as unknown as ProjectProfile,
+      changed: changed(["src/A.php"]),
+    });
+    expect(result.paths).toEqual(["tests/ATest.php"]);
+  });
+
+  it("runs the full suite when a test support file changes", async () => {
+    const root = tree(["tests/bootstrap.php", "tests/ATest.php"]);
+    const result = await selectTests({
+      root,
+      profile: profile(),
+      changed: changed(["tests/bootstrap.php"]),
+    });
+    expect(result.mode).toBe("full-suite");
+    expect(result.fallbackReason).toBe("tests:full-suite-fallback");
+  });
+
+  it("never maps tests through a configured test root that symlinks outside", async () => {
+    const base = tree(["app/src/A.php", "outside/tests/ATest.php"]);
+    const root = join(base, "app");
+    symlinkSync(join(base, "outside", "tests"), join(root, "tests"));
+    const result = await selectTests({
+      root,
+      profile: profile(),
+      changed: changed(["src/A.php"]),
+    });
+    expect(result.mode).toBe("full-suite");
+    expect(result.paths).toEqual([]);
+    expect(result.fallbackReason).toBe("tests:full-suite-fallback");
+  });
+
+  it("runs the full suite when PHPUnit configuration changes", async () => {
+    const root = tree(["phpunit.xml", "tests/ATest.php"]);
+    const result = await selectTests({
+      root,
+      profile: profile(),
+      changed: changed(["phpunit.xml"]),
+    });
+    expect(result.mode).toBe("full-suite");
+    expect(result.fallbackReason).toBe("tests:full-suite-fallback");
+  });
+
+  it("runs the full suite when the VCS scope was truncated", async () => {
+    const root = tree(["src/A.php", "tests/ATest.php"]);
+    const result = await selectTests({
+      root,
+      profile: profile(),
+      changed: { ...changed(["src/A.php"]), truncated: true },
+    });
+    expect(result.mode).toBe("full-suite");
+    expect(result.fallbackReason).toBe("tests:full-suite-fallback");
+  });
+
+  it("runs the full suite when a deleted PHP file is outside the known roots", async () => {
+    const root = tree(["tests/ATest.php"]);
+    const result = await selectTests({
+      root,
+      profile: profile(),
+      changed: changed([], ["bootstrap.php"]),
+    });
+    expect(result.mode).toBe("full-suite");
+    expect(result.fallbackReason).toBe("tests:full-suite-fallback");
+  });
+
+  it("applies the targeted-test limit to direct test changes", async () => {
+    const files = Array.from({ length: MAX_TARGETED_TESTS + 1 }, (_, i) => `tests/T${i}Test.php`);
+    const root = tree(files);
+    const result = await selectTests({
+      root,
+      profile: profile(),
+      changed: changed(files),
     });
     expect(result.mode).toBe("full-suite");
     expect(result.fallbackReason).toBe("tests:full-suite-fallback");

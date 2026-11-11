@@ -39,6 +39,7 @@ export const REASONS = {
   aborted: "aborted",
   timeout: "timeout",
   executionFailed: "execution-failed",
+  scopeTruncated: "scope-truncated",
 } as const;
 
 export interface CheckResult {

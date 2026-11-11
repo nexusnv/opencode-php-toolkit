@@ -108,15 +108,16 @@ export default Plugin.define({
             return async (input, context) => {
                 const requested = input?.directory;
                 const target = typeof requested === "string" && requested ? requested : undefined;
-                const scope = resolveProjectScope(dir, target);
-                const store = metrics.storeFor(scope);
+                const fallbackScope = resolveProjectScope(dir, target);
                 try {
                     const outcome = await run(input, context);
+                    const scope = outcome.scope ?? fallbackScope;
+                    const store = metrics.storeFor(scope);
                     await store.recordTool({ tool: name, status: outcome.status, findings: outcome.findings });
                     return { content: outcome.text };
                 }
                 catch (err) {
-                    await store.recordTool({ tool: name, status: "error", findings: 0 });
+                    await metrics.storeFor(fallbackScope).recordTool({ tool: name, status: "error", findings: 0 });
                     throw err;
                 }
             };
@@ -354,10 +355,19 @@ export default Plugin.define({
                             session = await ctx.session.get({ sessionID: context.sessionID });
                         }
                         catch (err) {
-                            console.warn(`[php-toolkit] could not resolve the session for php_verify: ${err.message}`);
+                            const message = err.message;
+                            console.warn(`[php-toolkit] could not resolve the session for php_verify: ${message}`);
+                            // Fail closed: without the session we have no project root and
+                            // no command-level permissions. Running anyway could spawn a
+                            // command the session denied, in the wrong project.
+                            return {
+                                text: `php_verify: could not resolve the session (${message}). Verification was not run because its project root and command permissions are unavailable.`,
+                                status: "error",
+                                findings: 0,
+                            };
                         }
-                        const sessionRoot = session?.location?.directory ?? dir;
-                        const subpath = session?.subpath ?? null;
+                        const sessionRoot = session.location.directory;
+                        const subpath = session.subpath ?? null;
                         const report = await phpVerify(input, {
                             sessionRoot,
                             profileFor: (root) => profileCache.resolve(root, root === sessionRoot ? subpath : null),
@@ -386,6 +396,7 @@ export default Plugin.define({
                             text: report.text,
                             status: report.status === "error" ? "error" : "ok",
                             findings: report.findings,
+                            scope,
                         };
                     }),
                 });

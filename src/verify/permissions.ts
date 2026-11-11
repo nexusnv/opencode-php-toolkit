@@ -18,7 +18,8 @@ export function commandRules(rules: readonly PermissionRule[]): PermissionRule[]
 
 function commandCandidates(cmd: string, args: readonly string[], cwd: string): string[] {
   const line = [cmd, ...args].join(" ");
-  const candidates = new Set<string>([line, cmd, basename(cmd)]);
+  const name = basename(cmd);
+  const candidates = new Set<string>([line, cmd, name, [name, ...args].join(" ")]);
   if (isAbsolute(cmd)) {
     const rel = relative(cwd, cmd);
     if (rel && !rel.startsWith("..") && !isAbsolute(rel)) {

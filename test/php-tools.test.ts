@@ -464,6 +464,44 @@ describe("runTestSuite", () => {
     });
     expect(outcome).toMatchObject({ status: "error", failure: "permission-denied", summary: null });
   });
+
+  it("runs every selected test path separately and aggregates the results", async () => {
+    const dir = workspace({ "vendor/bin/phpunit": FAKE_PHPUNIT_CLEAN });
+    const calls: string[][] = [];
+    const outcome = await runTestSuite(dir, undefined, undefined, {
+      paths: ["tests/ATest.php", "tests/BTest.php"],
+      runner: {
+        run: async (_cmd, args) => {
+          calls.push([...args]);
+          const failing = args.at(-1) === "tests/BTest.php";
+          return {
+            ok: true,
+            stdout: `<testsuites><testsuite tests="1" assertions="1" failures="${failing ? 1 : 0}" errors="0" skipped="0"></testsuite></testsuites>`,
+            stderr: "",
+            code: 0,
+            killed: false,
+            aborted: false,
+          };
+        },
+      },
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toContain("tests/ATest.php");
+    expect(calls[1]).toContain("tests/BTest.php");
+    expect(outcome).toMatchObject({
+      status: "ok",
+      findings: 1,
+      summary: { tests: 2, failures: 1 },
+    });
+  });
+
+  it("classifies a killed run with no exit code as timed out", async () => {
+    const dir = workspace({ "vendor/bin/phpunit": FAKE_PHPUNIT_CLEAN });
+    const outcome = await runTestSuite(dir, undefined, undefined, {
+      runner: runner("", { ok: false, code: null, killed: true, aborted: false }),
+    });
+    expect(outcome).toMatchObject({ status: "error", failure: "timed-out" });
+  });
 });
 
 describe("composerOutdated", () => {

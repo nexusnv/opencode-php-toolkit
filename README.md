@@ -99,8 +99,8 @@ It is on demand: it never blocks a response and never runs automatically.
 
 - Checks: `lint`, `composer`, `tests`, `static`, `style`, `architecture`.
 - `scope: "changed"` (default) uses the host VCS working tree (staged, unstaged and untracked files); `scope: "all"` runs the full suite/analysis.
-- `paths` overrides the changed-file set for `lint`, `static` and `style` regardless of scope. Production paths are never passed to the test runner.
-- Changed production files map to `{ClassName}Test.php` under the test roots; a missing mapping, an unmapped PHP change or a deleted source file runs the full suite and labels the check `tests:full-suite-fallback`.
+- `paths` overrides the changed-file set for `lint`, `static` and `style` regardless of scope. Paths must resolve inside the verification root (including through symlinks); more than 500 distinct PHP paths is rejected rather than silently truncated. Production paths are never passed to the test runner.
+- Changed production files map to `{ClassName}Test.php` under the test roots; a missing mapping, an unmapped PHP change, a deleted source file, a test-runner configuration/support change or a truncated change list runs the full suite and labels the check `tests:full-suite-fallback`.
 - Missing tools and configuration are reported as `unavailable`; intentionally skipped work is `skipped` with a reason code. The aggregate is `passed` only when every requested check passed, and `partial` for mixed/skipped/warning/timed-out/cancelled results.
 - The tool never installs dependencies, edits configuration or applies fixes. Style checks are dry-run. Tests and static analysis execute project code, so they inherit the host's permission model; denied or approval-gated commands are reported as cancelled and never bypassed.
 - `verification: "off"` removes the Build/Design/Test completion reminder; the tool remains available.

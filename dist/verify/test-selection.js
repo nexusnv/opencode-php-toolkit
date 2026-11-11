@@ -1,6 +1,6 @@
 import { readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { MAX_SCOPE_FILES, toPosix } from "./changed.js";
+import { MAX_SCOPE_FILES, containedConfiguredRoots, normalizeConfiguredRoot, } from "./changed.js";
 import { REASONS } from "./types.js";
 /** Bounded scan for `*Test.php` files under the test roots. */
 export const MAX_TEST_SEARCH_ENTRIES = 2_000;
@@ -27,11 +27,13 @@ async function existingDir(root, name) {
     }
 }
 async function findRoots(root, configured, conventional) {
-    const roots = [...new Set(configured.map((dir) => toPosix(dir).replace(/\/$/, "")).filter(Boolean))];
-    if (roots.length > 0)
-        return roots;
+    const roots = configured.filter((dir) => normalizeConfiguredRoot(dir) !== "");
+    if (roots.length > 0) {
+        return (await containedConfiguredRoots(root, roots)).roots;
+    }
     const present = await Promise.all(conventional.map(async (name) => ((await existingDir(root, name)) ? name : null)));
-    return present.filter((name) => name !== null);
+    const contained = await containedConfiguredRoots(root, present.filter((name) => name !== null));
+    return contained.roots;
 }
 async function isFile(root, rel) {
     try {
@@ -40,6 +42,13 @@ async function isFile(root, rel) {
     catch {
         return false;
     }
+}
+function isTestConfig(file) {
+    const name = basename(file);
+    return (name === "phpunit.xml" ||
+        name === "phpunit.xml.dist" ||
+        name === "phpunit.dist.xml" ||
+        name === "pest.xml");
 }
 /** Indexes `*Test.php` basenames under the test roots with a bounded walk. */
 async function indexTestFiles(root, testRoots) {
@@ -89,7 +98,7 @@ export async function selectTests(input) {
     const phpChanged = input.changed.files.filter((file) => file.endsWith(".php"));
     const direct = phpChanged.filter((file) => underAny(file, testRoots));
     const sourceChanged = phpChanged.filter((file) => !underAny(file, testRoots) && underAny(file, sourceRoots));
-    const deletedSources = input.changed.deleted.filter((file) => file.endsWith(".php") && !underAny(file, testRoots) && underAny(file, sourceRoots));
+    const deletedSources = input.changed.deleted.filter((file) => file.endsWith(".php") && !underAny(file, testRoots));
     const directOnly = () => ({
         mode: direct.length > 0 ? "targeted" : "none",
         paths: direct,
@@ -104,6 +113,14 @@ export async function selectTests(input) {
         mapped,
         fallbackReason: REASONS.fullSuiteFallback,
     });
+    // A capped VCS list may have dropped the only change that mattered, and a
+    // test-runner configuration change can alter discovery or bootstrap.
+    const configChanged = [...input.changed.files, ...input.changed.deleted].some(isTestConfig);
+    // A test-root PHP file that is not a `*Test.php` file (bootstrap, Pest.php,
+    // TestCase, fixtures) affects tests that cannot be named from its path.
+    const supportChanged = direct.some((file) => !file.endsWith("Test.php"));
+    if (input.changed.truncated || configChanged || supportChanged)
+        return fallback(0);
     if (deletedSources.length > 0)
         return fallback(0);
     // A non-test PHP change outside the known source roots cannot be mapped or
@@ -111,8 +128,9 @@ export async function selectTests(input) {
     const unclassified = phpChanged.filter((file) => !underAny(file, testRoots) && !underAny(file, sourceRoots));
     if (unclassified.length > 0)
         return fallback(0);
-    if (sourceChanged.length === 0)
-        return directOnly();
+    if (sourceChanged.length === 0) {
+        return direct.length > MAX_TARGETED_TESTS ? fallback(0) : directOnly();
+    }
     const mapped = new Set();
     const missing = [];
     for (const source of sourceChanged) {

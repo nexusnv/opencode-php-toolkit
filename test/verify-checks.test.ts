@@ -6,7 +6,7 @@ import type { ProjectProfile } from "../src/profile.js";
 import type { ChangedScope } from "../src/verify/changed.js";
 import { composerCheck } from "../src/verify/checks/composer.js";
 import { LINT_FILE_CAP, lintCheck } from "../src/verify/checks/lint.js";
-import { staticCheck } from "../src/verify/checks/static.js";
+import { MAX_STATIC_FILES, staticCheck } from "../src/verify/checks/static.js";
 import type { CheckEnvironment } from "../src/verify/checks/shared.js";
 import {
   PERMISSION_DENIED_CODE,
@@ -39,7 +39,13 @@ function runner(script: Script): CommandRunner {
   };
 }
 
-const changed: ChangedScope = { source: "vcs", files: ["src/A.php"], deleted: [], note: null };
+const changed: ChangedScope = {
+  source: "vcs",
+  files: ["src/A.php"],
+  deleted: [],
+  truncated: false,
+  note: null,
+};
 
 function env(overrides: Partial<CheckEnvironment> = {}): CheckEnvironment {
   const profile = {
@@ -52,6 +58,7 @@ function env(overrides: Partial<CheckEnvironment> = {}): CheckEnvironment {
     scope: "changed",
     changed,
     files: ["src/A.php"],
+    pathOverride: false,
     runner: runner(() => ({})),
     signal: new AbortController().signal,
     ...overrides,
@@ -103,7 +110,7 @@ describe("lintCheck", () => {
     expect(result).toMatchObject({ status: "skipped", reason: "no-relevant-changes" });
   });
 
-  it("caps the files and says so", async () => {
+  it("lints every file in batches instead of stopping at the first cap", async () => {
     let calls = 0;
     const files = Array.from({ length: LINT_FILE_CAP + 2 }, (_, i) => `src/F${i}.php`);
     const result = await lintCheck(
@@ -115,8 +122,23 @@ describe("lintCheck", () => {
         }),
       }),
     );
-    expect(calls).toBe(LINT_FILE_CAP);
-    expect(result.summary).toContain(`first ${LINT_FILE_CAP} of ${files.length}`);
+    expect(calls).toBe(files.length);
+    expect(result).toMatchObject({ status: "passed", findings: 0 });
+    expect(result.summary).toContain(`${files.length} file(s), 0 errors`);
+  });
+
+  it("keeps known parse errors when a later lint command is denied", async () => {
+    const result = await lintCheck(
+      env({
+        files: ["src/Broken.php", "src/Denied.php"],
+        runner: runner((_cmd, args) => {
+          if (args.includes("src/Denied.php")) return { ok: false, code: PERMISSION_DENIED_CODE };
+          return { ok: false, code: 255, stdout: "PHP Parse error" };
+        }),
+      }),
+    );
+    expect(result).toMatchObject({ status: "failed", findings: 1 });
+    expect(result.summary).toContain("run incomplete");
   });
 });
 
@@ -215,5 +237,57 @@ describe("staticCheck", () => {
       }),
     );
     expect(seen[0]).not.toContain("src/A.php");
+  });
+
+  it("runs full analysis in scope all when discovery found no files", async () => {
+    const root = tempProject("vendor/bin/phpstan");
+    const seen: string[][] = [];
+    const result = await staticCheck(
+      env({
+        root,
+        scope: "all",
+        files: [],
+        runner: runner((cmd, args) => {
+          seen.push([...args]);
+          return {};
+        }),
+      }),
+    );
+    expect(result.status).toBe("passed");
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).not.toContain("src/A.php");
+    expect(result.summary).toContain("full analysis");
+  });
+
+  it("passes explicit paths in scope all", async () => {
+    const root = tempProject("vendor/bin/phpstan");
+    const seen: string[][] = [];
+    const result = await staticCheck(
+      env({
+        root,
+        scope: "all",
+        pathOverride: true,
+        runner: runner((cmd, args) => {
+          seen.push([...args]);
+          return {};
+        }),
+      }),
+    );
+    expect(result.status).toBe("passed");
+    expect(seen[0]).toContain("src/A.php");
+  });
+
+  it("reports a clean but capped changed scope as truncated", async () => {
+    const root = tempProject("vendor/bin/phpstan");
+    const files = Array.from({ length: MAX_STATIC_FILES + 1 }, (_, i) => `src/F${i}.php`);
+    const result = await staticCheck(
+      env({
+        root,
+        files,
+        runner: runner(() => ({ stdout: "{}" })),
+      }),
+    );
+    expect(result).toMatchObject({ status: "warning", reason: "scope-truncated" });
+    expect(result.summary).toContain("1 file(s) not analysed");
   });
 });

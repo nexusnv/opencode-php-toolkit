@@ -24,6 +24,8 @@ export interface CheckEnvironment {
   changed: ChangedScope;
   /** Root-relative PHP files selected for lint/static/style. */
   files: string[];
+  /** True when `files` came from the explicit `paths` input. */
+  pathOverride: boolean;
   runner: CommandRunner;
   signal: AbortSignal;
 }

@@ -474,38 +474,19 @@ export function parseJUnitReport(stdout) {
         failing,
     };
 }
-/**
- * Runs the project's test suite via `vendor/bin/pest` or `vendor/bin/phpunit`.
- * The vendor binary is the only allowed entry point (never a bare PATH
- * binary), the working directory is explicit, and the run is time-boxed and
- * abortable. Failing tests are findings, not a tool error. The structured
- * summary lets `php_verify` report counts without re-parsing the text.
- */
-export async function runTestSuite(rawCwd, signal, filter, options = {}) {
-    // Resolve once: the vendor binaries are joined onto this path AND it is
-    // the child cwd, so a relative input must not be applied twice.
-    const cwd = resolve(rawCwd);
-    const pestBin = join(cwd, "vendor/bin/pest");
-    const phpunitBin = join(cwd, "vendor/bin/phpunit");
-    const [hasPest, hasPhpunit] = await Promise.all([pathExists(pestBin), pathExists(phpunitBin)]);
-    const kind = hasPest ? "pest" : hasPhpunit ? "phpunit" : null;
-    const binary = hasPest ? pestBin : hasPhpunit ? phpunitBin : null;
-    if (!binary || !kind) {
-        return {
-            text: "php_test: no vendor/bin/pest or vendor/bin/phpunit found. Install the dev dependencies (composer require --dev pestphp/pest or phpunit/phpunit) and retry. Tests are never run from a bare PATH binary.",
-            status: "error",
-            findings: 0,
-            failure: "missing-tool",
-            kind: null,
-            summary: null,
-        };
-    }
-    const args = ["--log-junit", "php://stdout"];
-    if (filter)
-        args.push("--filter", filter);
-    if (options.paths && options.paths.length > 0)
-        args.push(...options.paths);
-    const r = await (options.runner ?? execFileRunner).run(binary, args, cwd, 300000, signal);
+function formatTestOutcome(kind, summary) {
+    const skipped = summary.skipped > 0 ? `, ${summary.skipped} skipped` : "";
+    const failing = summary.failing.length ? `\n${summary.failing.join("\n")}` : "";
+    return {
+        text: `${kind}: ${summary.tests} test(s), ${summary.assertions} assertions, ${summary.failures} failures, ${summary.errors} errors${skipped}${failing}`.slice(0, 16000),
+        status: "ok",
+        findings: summary.failures + summary.errors,
+        kind,
+        summary,
+    };
+}
+async function runTestCommand(binary, kind, args, cwd, timeout, signal, runner) {
+    const r = await runner.run(binary, args, cwd, timeout, signal);
     const permission = permissionFailure(r);
     if (permission) {
         return {
@@ -517,22 +498,22 @@ export async function runTestSuite(rawCwd, signal, filter, options = {}) {
             summary: null,
         };
     }
-    if (isMissingBinary(r) || (!r.ok && r.code === null)) {
-        return {
-            text: `php_test: could not execute the ${kind} binary.\n${r.stderr}`.trim(),
-            status: "error",
-            findings: 0,
-            failure: isMissingBinary(r) ? "missing-tool" : "execution",
-            kind,
-            summary: null,
-        };
-    }
     if (r.killed) {
         return {
             text: "php_test: the test run timed out or was aborted.",
             status: "error",
             findings: 0,
             failure: r.aborted ? "aborted" : "timed-out",
+            kind,
+            summary: null,
+        };
+    }
+    if (isMissingBinary(r) || (!r.ok && r.code === null)) {
+        return {
+            text: `php_test: could not execute the ${kind} binary.\n${r.stderr}`.trim(),
+            status: "error",
+            findings: 0,
+            failure: isMissingBinary(r) ? "missing-tool" : "execution",
             kind,
             summary: null,
         };
@@ -558,15 +539,91 @@ export async function runTestSuite(rawCwd, signal, filter, options = {}) {
             summary: null,
         };
     }
-    const skipped = summary.skipped > 0 ? `, ${summary.skipped} skipped` : "";
-    const failing = summary.failing.length ? `\n${summary.failing.join("\n")}` : "";
-    return {
-        text: `${kind}: ${summary.tests} test(s), ${summary.assertions} assertions, ${summary.failures} failures, ${summary.errors} errors${skipped}${failing}`.slice(0, 16000),
-        status: "ok",
-        findings: summary.failures + summary.errors,
-        kind,
-        summary,
+    return formatTestOutcome(kind, summary);
+}
+function mergeTestOutcomes(kind, outcomes) {
+    const findings = outcomes.reduce((total, outcome) => total + outcome.findings, 0);
+    const text = outcomes.map((outcome) => outcome.text).join("\n").slice(0, 16000);
+    const summaries = outcomes.map((outcome) => outcome.summary);
+    if (summaries.some((summary) => summary === null)) {
+        return { text, status: "ok", findings, kind, summary: null };
+    }
+    const summary = {
+        tests: 0,
+        assertions: 0,
+        failures: 0,
+        errors: 0,
+        skipped: 0,
+        failing: [],
     };
+    for (const part of summaries) {
+        summary.tests += part.tests;
+        summary.assertions += part.assertions;
+        summary.failures += part.failures;
+        summary.errors += part.errors;
+        summary.skipped += part.skipped;
+        summary.failing.push(...part.failing);
+    }
+    summary.failing = summary.failing.slice(0, 20);
+    return formatTestOutcome(kind, summary);
+}
+/**
+ * Runs the project's test suite via `vendor/bin/pest` or `vendor/bin/phpunit`.
+ * The vendor binary is the only allowed entry point (never a bare PATH
+ * binary), the working directory is explicit, and the run is time-boxed and
+ * abortable. Failing tests are findings, not a tool error. The structured
+ * summary lets `php_verify` report counts without re-parsing the text.
+ *
+ * PHPUnit (and Pest) only executes the first positional test path. Selected
+ * test files are therefore run one at a time, sharing a single 300s budget.
+ */
+export async function runTestSuite(rawCwd, signal, filter, options = {}) {
+    // Resolve once: the vendor binaries are joined onto this path AND it is
+    // the child cwd, so a relative input must not be applied twice.
+    const cwd = resolve(rawCwd);
+    const pestBin = join(cwd, "vendor/bin/pest");
+    const phpunitBin = join(cwd, "vendor/bin/phpunit");
+    const [hasPest, hasPhpunit] = await Promise.all([pathExists(pestBin), pathExists(phpunitBin)]);
+    const kind = hasPest ? "pest" : hasPhpunit ? "phpunit" : null;
+    const binary = hasPest ? pestBin : hasPhpunit ? phpunitBin : null;
+    if (!binary || !kind) {
+        return {
+            text: "php_test: no vendor/bin/pest or vendor/bin/phpunit found. Install the dev dependencies (composer require --dev pestphp/pest or phpunit/phpunit) and retry. Tests are never run from a bare PATH binary.",
+            status: "error",
+            findings: 0,
+            failure: "missing-tool",
+            kind: null,
+            summary: null,
+        };
+    }
+    const baseArgs = ["--log-junit", "php://stdout"];
+    if (filter)
+        baseArgs.push("--filter", filter);
+    const runner = options.runner ?? execFileRunner;
+    const selected = options.paths ?? [];
+    if (selected.length <= 1) {
+        return runTestCommand(binary, kind, [...baseArgs, ...selected], cwd, 300000, signal, runner);
+    }
+    const deadline = Date.now() + 300_000;
+    const outcomes = [];
+    for (const path of selected) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
+            return {
+                text: "php_test: the targeted test run exceeded its 300s budget.",
+                status: "error",
+                findings: 0,
+                failure: "timed-out",
+                kind,
+                summary: null,
+            };
+        }
+        const outcome = await runTestCommand(binary, kind, [...baseArgs, path], cwd, remaining, signal, runner);
+        if (outcome.status === "error")
+            return outcome;
+        outcomes.push(outcome);
+    }
+    return mergeTestOutcomes(kind, outcomes);
 }
 export async function phpTest(rawCwd, signal, filter) {
     const { text, status, findings, failure } = await runTestSuite(rawCwd, signal, filter);

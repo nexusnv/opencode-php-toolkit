@@ -31,6 +31,7 @@ export const REASONS = {
     aborted: "aborted",
     timeout: "timeout",
     executionFailed: "execution-failed",
+    scopeTruncated: "scope-truncated",
 };
 export function isVerificationCheck(value) {
     return typeof value === "string" && VERIFICATION_CHECKS.includes(value);

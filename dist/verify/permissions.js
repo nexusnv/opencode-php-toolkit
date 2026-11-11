@@ -6,7 +6,8 @@ export function commandRules(rules) {
 }
 function commandCandidates(cmd, args, cwd) {
     const line = [cmd, ...args].join(" ");
-    const candidates = new Set([line, cmd, basename(cmd)]);
+    const name = basename(cmd);
+    const candidates = new Set([line, cmd, name, [name, ...args].join(" ")]);
     if (isAbsolute(cmd)) {
         const rel = relative(cwd, cmd);
         if (rel && !rel.startsWith("..") && !isAbsolute(rel)) {

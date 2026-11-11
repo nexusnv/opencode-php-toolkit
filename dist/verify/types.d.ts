@@ -20,6 +20,7 @@ export declare const REASONS: {
     readonly aborted: "aborted";
     readonly timeout: "timeout";
     readonly executionFailed: "execution-failed";
+    readonly scopeTruncated: "scope-truncated";
 };
 export interface CheckResult {
     check: VerificationCheck;

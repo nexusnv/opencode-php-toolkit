@@ -147,4 +147,29 @@ describe("verification merge and migration", () => {
     const unknown = deserialize({ version: 3, verification: { runs: 1, lastStatus: "weird" } }, project);
     expect(unknown.metrics.verification.lastStatus).toBeNull();
   });
+
+  it("preserves a stored status when the pending delta has no run", () => {
+    const base: MetricsDelta = {
+      tools: {},
+      commands: {},
+      triggerHits: 0,
+      routing: {
+        selections: {},
+        activations: {},
+        unactivated: {},
+        intents: {},
+        concerns: {},
+        dropped: {},
+        taskGenerations: 0,
+        continuations: 0,
+        resets: 0,
+      },
+      verification: {
+        ...emptyVerificationMetrics(),
+        lastStatus: "failed",
+      },
+    };
+    const empty: MetricsDelta = { ...base, verification: emptyVerificationMetrics() };
+    expect(mergeDelta(base, empty).verification.lastStatus).toBe("failed");
+  });
 });

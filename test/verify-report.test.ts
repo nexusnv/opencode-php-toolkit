@@ -71,7 +71,7 @@ describe("renderVerificationReport", () => {
     expect(report.text).toContain("fix the failing checks");
   });
 
-  it("caps the report at 24,000 characters with a visible notice", () => {
+  it("caps the report at 24,000 characters without dropping later rows or the summary", () => {
     const report = renderVerificationReport({
       scope: "changed",
       checks: [
@@ -83,12 +83,27 @@ describe("renderVerificationReport", () => {
           findings: 1,
           detail: "x".repeat(40_000),
         },
+        {
+          check: "static",
+          status: "failed",
+          reason: null,
+          summary: "later check must survive",
+          findings: 2,
+          detail: null,
+        },
+        passed("style", "clean"),
       ],
       permissionNote: null,
       changedNote: null,
     });
     expect(report.text.length).toBeLessThanOrEqual(MAX_VERIFICATION_CHARS);
     expect(report.text).toContain("report truncated");
+    expect(report.text).toContain("later check must survive");
+    expect(report.text).toContain("Summary: failed");
+    expect(report.text).toContain("fix the failing checks");
+    expect(report.text.indexOf("later check must survive")).toBeLessThan(
+      report.text.indexOf("Summary: failed"),
+    );
   });
 
   it("reports an unavailable aggregate without check rows", () => {

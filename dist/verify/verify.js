@@ -6,7 +6,7 @@ import { lintCheck } from "./checks/lint.js";
 import { staticCheck } from "./checks/static.js";
 import { styleCheck, styleTool } from "./checks/style.js";
 import { testsCheck, testsDetected } from "./checks/tests.js";
-import { listProjectPhpFiles, normalizeVcsStatus, pathsOverride, resolveVerificationRoot, } from "./changed.js";
+import { canonicalVerificationRoot, findWorktreeRoot, listProjectPhpFiles, normalizeVcsStatus, pathsOverride, resolveVerificationRoot, } from "./changed.js";
 import { commandRules, evaluateCommand, toCommandDecision } from "./permissions.js";
 import { renderVerificationReport } from "./report.js";
 import { REASONS, VERIFICATION_CHECKS, isVerificationCheck, } from "./types.js";
@@ -51,10 +51,11 @@ function errorReport(scope, message) {
 async function readChangedScope(deps, root) {
     try {
         const status = await deps.vcsStatus(root);
-        return normalizeVcsStatus(root, status.data ?? []);
+        const worktreeRoot = await findWorktreeRoot(root);
+        return normalizeVcsStatus(root, status.data ?? [], worktreeRoot);
     }
     catch {
-        return { source: "unavailable", files: [], deleted: [], note: null };
+        return { source: "unavailable", files: [], deleted: [], truncated: false, note: null };
     }
 }
 export async function phpVerify(input, deps) {
@@ -75,9 +76,14 @@ export async function phpVerify(input, deps) {
     const rootResult = resolveVerificationRoot(deps.sessionRoot, input.directory);
     if ("error" in rootResult)
         return errorReport(scope, rootResult.error);
-    const root = rootResult.root;
+    const canonical = await canonicalVerificationRoot(deps.sessionRoot, rootResult.root);
+    if ("error" in canonical)
+        return errorReport(scope, canonical.error);
+    const root = canonical.root;
     const profile = await deps.profileFor(root);
-    const provided = input.paths && input.paths.length > 0 ? pathsOverride(root, input.paths) : null;
+    const provided = input.paths && input.paths.length > 0
+        ? await pathsOverride(root, input.paths, root)
+        : null;
     if (provided && "error" in provided)
         return errorReport(scope, provided.error);
     const notes = [];
@@ -90,7 +96,7 @@ export async function phpVerify(input, deps) {
         changed =
             scope === "changed"
                 ? await readChangedScope(deps, root)
-                : { source: "vcs", files: [], deleted: [], note: null };
+                : { source: "vcs", files: [], deleted: [], truncated: false, note: null };
         files = provided.files;
         if (provided.ignored > 0)
             notes.push(`${provided.ignored} non-PHP path(s) ignored`);
@@ -104,11 +110,14 @@ export async function phpVerify(input, deps) {
         }
     }
     else if (scope === "all") {
-        changed = { source: "vcs", files: [], deleted: [], note: null };
+        changed = { source: "vcs", files: [], deleted: [], truncated: false, note: null };
         const list = await listProjectPhpFiles(root, profile);
         files = list.files;
         if (list.truncated)
             notes.push(`scope truncated to ${files.length} PHP files`);
+        if (list.outsideRoots > 0) {
+            notes.push(`${list.outsideRoots} source/test root(s) outside the verification root were ignored`);
+        }
     }
     else {
         changed = await readChangedScope(deps, root);
@@ -173,6 +182,7 @@ export async function phpVerify(input, deps) {
                 scope,
                 changed,
                 files,
+                pathOverride: provided !== null,
                 runner: gated,
                 signal: deps.signal,
             }));

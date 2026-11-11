@@ -73,6 +73,9 @@ export interface TestRunOutcome extends ToolOutcome {
  * binary), the working directory is explicit, and the run is time-boxed and
  * abortable. Failing tests are findings, not a tool error. The structured
  * summary lets `php_verify` report counts without re-parsing the text.
+ *
+ * PHPUnit (and Pest) only executes the first positional test path. Selected
+ * test files are therefore run one at a time, sharing a single 300s budget.
  */
 export declare function runTestSuite(rawCwd: string, signal?: AbortSignal, filter?: string, options?: {
     runner?: CommandRunner;
