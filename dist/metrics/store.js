@@ -55,6 +55,8 @@ export function emptyScannerMetrics() {
         cacheHits: 0,
         cacheModes: { content: 0, metadata: 0 },
         lastRunAt: null,
+        lastStatus: null,
+        lastCacheMode: null,
     };
 }
 /** Storage keys are `${STORAGE_PREFIX}${projectKey(path)}` - one doc per project. */
@@ -229,6 +231,12 @@ function migrateScanner(raw) {
             metadata: nonNegative(num(modes.metadata)),
         },
         lastRunAt: typeof candidate.lastRunAt === "string" ? candidate.lastRunAt : null,
+        lastStatus: ["ok", "unavailable", "timed-out", "cancelled", "error"].includes(String(candidate.lastStatus))
+            ? candidate.lastStatus
+            : null,
+        lastCacheMode: candidate.lastCacheMode === "content" || candidate.lastCacheMode === "metadata"
+            ? candidate.lastCacheMode
+            : null,
     };
 }
 /**
@@ -267,6 +275,7 @@ function emptyDelta() {
         triggerHits: 0,
         routing: emptyRoutingMetrics(),
         verification: emptyVerificationMetrics(),
+        scanner: emptyScannerMetrics(),
     };
 }
 function isEmptyRouting(routing) {
@@ -296,11 +305,21 @@ function isEmptyVerification(verification) {
         verification.lastStatus === null);
 }
 function isEmptyDelta(delta) {
+    const scanner = delta.scanner ?? emptyScannerMetrics();
     return (delta.triggerHits === 0 &&
         Object.keys(delta.tools).length === 0 &&
         Object.keys(delta.commands).length === 0 &&
         isEmptyRouting(delta.routing) &&
-        isEmptyVerification(delta.verification));
+        isEmptyVerification(delta.verification) &&
+        scanner.runs === 0 &&
+        scanner.findings === 0 &&
+        scanner.hypotheses === 0 &&
+        scanner.truncated === 0 &&
+        scanner.cacheHits === 0 &&
+        scanner.cacheModes.content === 0 &&
+        scanner.cacheModes.metadata === 0 &&
+        scanner.lastRunAt === null &&
+        scanner.lastStatus === null);
 }
 function later(a, b) {
     // Strictly greater: on a timestamp tie, b (the delta recorded later by
@@ -407,6 +426,8 @@ export function applyRoutingEvent(target, event, now) {
  * flight must survive the retry, not be overwritten by it.
  */
 export function mergeDelta(a, b) {
+    const scannerA = a.scanner ?? emptyScannerMetrics();
+    const scannerB = b.scanner ?? emptyScannerMetrics();
     const tools = {};
     for (const [name, e] of Object.entries(a.tools))
         tools[name] = { ...e };
@@ -446,6 +467,21 @@ export function mergeDelta(a, b) {
         triggerHits: a.triggerHits + b.triggerHits,
         routing: mergeRoutingMetrics(a.routing, b.routing),
         verification: mergeVerification(a.verification, b.verification),
+        scanner: mergeScannerMetrics(scannerA, scannerB),
+    };
+}
+function mergeScannerMetrics(a, b) {
+    const latest = (a.lastRunAt ?? "") > (b.lastRunAt ?? "") ? a : b;
+    return {
+        runs: a.runs + b.runs,
+        findings: a.findings + b.findings,
+        hypotheses: a.hypotheses + b.hypotheses,
+        truncated: a.truncated + b.truncated,
+        cacheHits: a.cacheHits + b.cacheHits,
+        cacheModes: { content: a.cacheModes.content + b.cacheModes.content, metadata: a.cacheModes.metadata + b.cacheModes.metadata },
+        lastRunAt: latest.lastRunAt,
+        lastStatus: latest.lastStatus,
+        lastCacheMode: latest.lastCacheMode,
     };
 }
 function mergeVerification(a, b) {
@@ -468,6 +504,7 @@ function mergeVerification(a, b) {
 }
 /** Applies pending increments to a document, producing the merged view. */
 function applyDelta(base, delta) {
+    const scannerDelta = delta.scanner ?? emptyScannerMetrics();
     const tools = {};
     for (const [name, entry] of Object.entries(base.tools)) {
         tools[name] = { ...entry };
@@ -508,6 +545,20 @@ function applyDelta(base, delta) {
         triggerHits: base.triggerHits + delta.triggerHits,
         routing: mergeRoutingMetrics(base.routing ?? emptyRoutingMetrics(), delta.routing),
         verification: mergeVerification(base.verification ?? emptyVerificationMetrics(), delta.verification),
+        scanner: {
+            runs: base.scanner.runs + scannerDelta.runs,
+            findings: base.scanner.findings + scannerDelta.findings,
+            hypotheses: base.scanner.hypotheses + scannerDelta.hypotheses,
+            truncated: base.scanner.truncated + scannerDelta.truncated,
+            cacheHits: base.scanner.cacheHits + scannerDelta.cacheHits,
+            cacheModes: {
+                content: base.scanner.cacheModes.content + scannerDelta.cacheModes.content,
+                metadata: base.scanner.cacheModes.metadata + scannerDelta.cacheModes.metadata,
+            },
+            lastRunAt: scannerDelta.lastRunAt ?? base.scanner.lastRunAt,
+            lastStatus: scannerDelta.lastRunAt ? scannerDelta.lastStatus : base.scanner.lastStatus,
+            lastCacheMode: scannerDelta.lastRunAt ? scannerDelta.lastCacheMode : base.scanner.lastCacheMode,
+        },
     };
 }
 /**
@@ -658,6 +709,20 @@ export class MetricsStore {
         verification.findings += nonNegative(input.findings);
         verification.lastRunAt = now;
         verification.lastStatus = input.status;
+        this.markDirty();
+    }
+    async recordScanner(input) {
+        const scanner = this.delta.scanner ?? (this.delta.scanner = emptyScannerMetrics());
+        scanner.runs += 1;
+        scanner.findings += nonNegative(input.findings);
+        scanner.hypotheses += nonNegative(input.hypotheses);
+        scanner.truncated += input.truncated ? 1 : 0;
+        scanner.cacheHits += input.cacheHit ? 1 : 0;
+        if (input.cacheMode)
+            scanner.cacheModes[input.cacheMode] += 1;
+        scanner.lastRunAt = new Date().toISOString();
+        scanner.lastStatus = input.status;
+        scanner.lastCacheMode = input.cacheMode;
         this.markDirty();
     }
     /**

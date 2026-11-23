@@ -55,7 +55,7 @@ Current plans:
 | Phase 1 — Foundation | Created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-1-foundation.md` |
 | Phase 2 — Pattern Library and Architecture Behavior | Created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-2-pattern-library.md` |
 | Phase 3 — Verification | Created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-3-verification.md` |
-| Phase 4 — Architect Surface and Diagnostics | Not created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-4-architect-surface.md` |
+| Phase 4 — Architect Surface and Diagnostics | Created | `docs/superpowers/plans/2026-11-23-php-architect-workflows.md` |
 | Phase 5 — Architecture Scanner | Not created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-5-scanner.md` |
 | Phase 6 — Drift Detection and Feedback | Deferred | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-6-drift.md` |
 | Phase 7 — Advanced Routing | Deferred | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-7-advanced-routing.md` |
@@ -225,11 +225,11 @@ Deliverables:
 
 Exit gate:
 
-- [ ] Agent file is copied on install and never overwrites modified files.
-- [ ] `/php-design` proceeds for non-significant changes.
-- [ ] `/php-architect` always stops for approval.
-- [ ] Status output reflects routing and verification state.
-- [ ] No additional specialist agents are introduced.
+- [x] Agent file is copied on install and never overwrites modified files.
+- [x] `/php-design` proceeds for non-significant changes.
+- [x] `/php-architect` always stops for approval.
+- [x] Status output reflects routing and verification state.
+- [x] No additional specialist agents are introduced.
 
 ### Phase 5 — Architecture Scanner (`0.6.0`)
 
@@ -244,11 +244,11 @@ Deliverables:
 
 Exit gate:
 
-- [ ] Objective findings are separated from hypotheses.
-- [ ] No layer violation without configured boundaries.
-- [ ] Cache invalidates on file/config/lock/toolkit changes.
-- [ ] Scanner is read-only, bounded by `maxFiles` and timeout.
-- [ ] Auto mode is opt-in; default remains on-demand.
+- [x] Objective findings are separated from hypotheses.
+- [x] No layer violation without configured boundaries.
+- [x] Cache invalidates on file/config/lock/toolkit changes.
+- [x] Scanner is read-only, bounded by `maxFiles` and timeout.
+- [x] Auto mode is opt-in; default remains on-demand.
 
 ### Phase 6 — Drift Detection and Feedback (`0.7.0` or experimental)
 

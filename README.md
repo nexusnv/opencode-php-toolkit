@@ -28,7 +28,7 @@ Published package (after `npm publish`):
 > current features, use the local path form or a build from this branch. The
 > release checklist updates these pins.
 
-> On install, the package copies the four `agents/php-*.md` files into
+> On install, the package copies the five `agents/php-*.md` files into
 > `~/.config/opencode/agents/` as a convenience (see below). Existing files
 > are never overwritten — a customized agent keeps its content across
 > installs and upgrades; delete the file to get the bundled version back.
@@ -78,9 +78,9 @@ opencode plugin add file:///home/leonidas/dev/nexusnv/opencode-php-toolkit
 
 ## What you get
 
-- Agents (`agents/php-*.md`, `mode: subagent`): `php-reviewer`, `php-debugger`, `php-modernizer`, `php-tester`. On install, the package's `postinstall` script copies these four files into `~/.config/opencode/agents/` as a convenience, never overwriting files that already exist (v2 `AgentEditor` has no `add`; transforms can't create agents — files are the source of truth). Set `PHP_TOOLKIT_SKIP_AGENT_COPY=1` in the environment to opt out. The script writes nothing besides those four files (the OpenCode `commands/` directory is not touched). To undo after install, delete `php-reviewer.md`, `php-debugger.md`, `php-modernizer.md` and `php-tester.md` from `~/.config/opencode/agents/`.
+- Agents (`agents/php-*.md`, `mode: subagent`): `php-reviewer`, `php-debugger`, `php-modernizer`, `php-tester`, and `php-architect`. On install, the package's `postinstall` script copies these five files into `~/.config/opencode/agents/` as a convenience, never overwriting files that already exist (v2 `AgentEditor` has no `add`; transforms can't create agents — files are the source of truth). Set `PHP_TOOLKIT_SKIP_AGENT_COPY=1` in the environment to opt out. The script writes nothing besides those five files (the OpenCode `commands/` directory is not touched). To undo after install, delete the copied `php-*.md` files from `~/.config/opencode/agents/`.
 - Skills (13: 9 advertised, 4 hidden): `php-standards`, `php-static-analysis`, `php-testing`, `php-security`, `php-modernize`, `php-composer`, `php-architecture`, `php-debug`, and the advertised `php-design-patterns` index. Hidden core pattern skills (`autoinvoke: false`) are attached only by the router: `php-pattern-strategy`, `php-pattern-adapter`, `php-pattern-decorator`, `php-pattern-state`.
-- Commands (8): `/php-review`, `/php-analyze`, `/php-fix-style`, `/php-test`, `/php-audit`, `/php-upgrade`, `/php-scaffold`, `/php-toolkit-status`.
+- Commands (10): `/php-review`, `/php-analyze`, `/php-fix-style`, `/php-test`, `/php-audit`, `/php-upgrade`, `/php-design`, `/php-architect`, `/php-scaffold`, `/php-toolkit-status`.
 - Tools (`php_*` namespace, read-only unless noted):
   - `php_project_detect` — composer intel incl. analyzer/fixer config files and `composer config.platform.php`; no exec
   - `php_lint` — `php -l` + `composer validate`
@@ -88,6 +88,7 @@ opencode plugin add file:///home/leonidas/dev/nexusnv/opencode-php-toolkit
   - `php_composer_outdated` — direct deps with a newer version (network; the repositories configured in the project's `composer.json` determine which hosts Composer contacts)
   - `php_static_analysis` — PHPStan (or Psalm when absent), JSON output; analysis errors count as findings; **executes project-configured code** (analyzer binaries run bootstrap files, autoload and Psalm plugins with this session's privileges)
   - `php_test` — runs `vendor/bin/pest` or `vendor/bin/phpunit` against JUnit output; **executes project code** (tests only, 300s timeout, never a bare PATH binary)
+  - `php_architecture_scan` — read-only `token_get_all` structure scan; checks only explicitly configured layer boundaries and labels heuristics as hypotheses
   - `php_verify` — one normalized report for lint, composer, tests, static analysis, style and architecture; VCS-derived changed scope and test mapping; **executes project-configured tools** under session command permissions; never installs, edits or fixes
   - `php_metrics` — local usage metrics; `reset: true` clears this project's metrics, `export: true` dumps the snapshot as raw JSON (absolute project path omitted)
 - Hooks: `prompt` runs deterministic routing for PHP-context prompts, `context` adds the stable L0 engineering constitution plus one compact routing-state part, `tool.execute.before` warns on destructive `composer update` / `rector process` without `--dry-run` / `php-cs-fixer fix` without `--dry-run`.
@@ -104,6 +105,87 @@ It is on demand: it never blocks a response and never runs automatically.
 - Missing tools and configuration are reported as `unavailable`; intentionally skipped work is `skipped` with a reason code. The aggregate is `passed` only when every requested check passed, and `partial` for mixed/skipped/warning/timed-out/cancelled results.
 - The tool never installs dependencies, edits configuration or applies fixes. Style checks are dry-run. Tests and static analysis execute project code, so they inherit the host's permission model; denied or approval-gated commands are reported as cancelled and never bypassed.
 - `verification: "off"` removes the Build/Design/Test completion reminder; the tool remains available.
+
+#### Composer scripts and CI conventions
+
+Projects can map the standard verification checks to Composer scripts in the
+root `php-toolkit.json`. Each script must already exist in the root
+`composer.json`:
+
+```json
+{
+  "verification": {
+    "composerScripts": {
+      "tests": "test",
+      "static": "analyse",
+      "style": "cs-check"
+    }
+  }
+}
+```
+
+Mapped scripts run only when their check is explicitly included in a
+`php_verify` call's `checks` array. They do not replace the detected defaults.
+The toolkit invokes `composer run-script --no-interaction <name>` through the
+session's command permission rules. A mapped script always runs as a
+whole-project check, including when `scope` is `changed`; changed paths are not
+passed to it. Composer scripts are arbitrary project code and may have side
+effects, so review the script and approve or deny its command using OpenCode's
+normal permission controls.
+
+Project discovery recognizes GitHub Actions, GitLab CI, CircleCI, Bitbucket
+Pipelines and Azure Pipelines manifests. It reports provider names, recognizable
+PHP version values and known PHP quality tools. It does not run CI commands or
+retain CI file contents. `/php-toolkit-status` shows mapped script names and
+these safe CI summaries only.
+
+### Architecture scan
+
+`php_architecture_scan` is available by default as an on-demand tool. It scans at
+most 500 PHP files with PHP 8.1+'s built-in tokenizer, has a 20-second process
+limit, and does not write files or access the network. `vendor`, `node_modules`,
+`.git`, `var`, and `storage` are excluded. Structure counts are metrics;
+heuristics such as long methods, branching logic, static access, and large
+classes are hypotheses for review, never boundary violations.
+
+Boundary findings require valid explicit layers in the project root's
+`php-toolkit.json`:
+
+```json
+{
+  "architecture": {
+    "layers": {
+      "Domain": {
+        "namespaces": ["App\\Domain\\"],
+        "mayDependOn": []
+      },
+      "Infrastructure": {
+        "namespaces": ["App\\Infrastructure\\"],
+        "mayDependOn": ["Domain"]
+      }
+    },
+    "exclude": ["src/Generated"]
+  }
+}
+```
+
+`mayDependOn` names other declared layers. Invalid architecture configuration
+disables boundary checks and is reported as a diagnostic. `php_verify` runs the
+scanner architecture check only when valid explicit layers exist; a configured
+Deptrac installation continues to run as well.
+
+The cache includes the project root, PHP file fingerprints, architecture
+configuration, Composer lock fingerprint, scanner version, and toolkit version.
+Files up to 1 MiB are content-hashed. Larger files use path/size/mtime metadata
+and the report labels this best-effort mode as `metadata`.
+
+Set `architectureScan: "auto"` to enable an optional scan summary for tasks
+classified as both Design and Architecture. Auto mode scans at most 100 files
+with a 2-second process limit and adds only counts by result kind to model
+context; full findings remain in the on-demand tool output. On a
+remote-provider session, that count-only context summary is sent to the
+configured provider. `architectureScan: "off"` removes the tool and automatic
+summary.
 
 ## Reactive routing (0.3.0)
 
@@ -164,6 +246,7 @@ drop reasons only — never prompt text.
       "maxSkills": 3,
       "maxSkillChars": 12000,
       "architectureMode": "risk",
+      "architectureScan": "tool",
       "announceSelections": "off",
       "verification": "remind"
     }
@@ -178,9 +261,16 @@ Escape hatches:
 - `architectureMode: "off"` disables design gating.
 - `verification: "off"` removes the completion reminder for Build/Design/Test tasks.
 - `maxSkillChars` is capped at 16,000.
-- `architectureScan` and `announceSelections` are reserved for later phases;
-  the plugin parses them but they have no effect. Routing is always silent by
-  default.
+- `architectureScan: "tool"` keeps scanning on demand (default); `"auto"`
+  enables the bounded count-only Design summary; `"off"` disables scanning.
+- `announceSelections` is reserved for a later phase. Routing is always silent
+  by default.
+
+### Design workflows
+
+- `/php-design` gives a concise, risk-based design note. For small reversible work it states a short rationale and can proceed when implementation was requested; significant boundary, persistence, event, dependency-injection, security/data, or breaking API changes get options and an approval pause.
+- `/php-architect` uses the `php-architect` agent for deeper repository-grounded design. It is read-only while preparing the proposal and always waits for approval before implementation.
+- Both workflows stay framework-agnostic. Use the sibling Laravel or Symfony toolkit for framework-specific rules. An ADR is offered only for lasting architecture decisions and is never created without a request.
 
 ## Local metrics
 

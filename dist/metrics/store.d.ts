@@ -66,7 +66,10 @@ export interface ScannerMetrics {
         metadata: number;
     };
     lastRunAt: string | null;
+    lastStatus: ScannerRunStatus | null;
+    lastCacheMode: "content" | "metadata" | null;
 }
+export type ScannerRunStatus = "ok" | "unavailable" | "timed-out" | "cancelled" | "error";
 export interface PhpToolkitMetrics {
     version: number;
     startedAt: string;
@@ -179,6 +182,7 @@ export type MetricsDelta = {
     triggerHits: number;
     routing: RoutingMetrics;
     verification: VerificationMetrics;
+    scanner?: ScannerMetrics;
 };
 export declare function mergeRoutingMetrics(a: RoutingMetrics, b: RoutingMetrics): RoutingMetrics;
 /** Applies one routing event to a counter document. */
@@ -255,6 +259,14 @@ export declare class MetricsStore {
         status: AggregateStatus;
         checks: readonly CheckResult[];
         findings: number;
+    }): Promise<void>;
+    recordScanner(input: {
+        status: ScannerRunStatus;
+        findings: number;
+        hypotheses: number;
+        truncated: boolean;
+        cacheHit: boolean;
+        cacheMode: "content" | "metadata" | null;
     }): Promise<void>;
     /**
      * Persists pending changes.

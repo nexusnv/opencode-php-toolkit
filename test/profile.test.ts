@@ -53,9 +53,67 @@ describe("buildProjectProfile", () => {
     expect(p.tools.phpstan).toBe(false);
     expect(p.phpRequirement).toBe("^8.1");
   });
+
+  it("carries safe Composer script and CI convention metadata without raw command bodies", async () => {
+    const root = mkdtempSync(join(tmpdir(), "php-toolkit-profile-conventions-"));
+    try {
+      mkdirSync(join(root, ".github/workflows"), { recursive: true });
+      writeFileSync(join(root, "composer.json"), JSON.stringify({
+        scripts: { test: "vendor/bin/phpunit --testsuite unit", lint: "php -l src" },
+      }));
+      writeFileSync(join(root, ".github/workflows/ci.yml"), "php-version: ['8.1', '8.2']\nrun: vendor/bin/phpstan analyse\n");
+      const profile = await buildProjectProfile(root, null);
+      expect(profile.composerScriptNames).toEqual(["lint", "test"]);
+      expect(profile.composerScriptTools).toEqual(["phpunit"]);
+      expect(profile.ci.providers).toEqual(["github-actions"]);
+      expect(profile.ci.phpVersions).toEqual(["8.1", "8.2"]);
+      expect(profile.ci.tools).toEqual(["phpstan"]);
+      expect(JSON.stringify(profile)).not.toContain("vendor/bin/phpunit --testsuite unit");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("ProjectProfileCache", () => {
+  it("loads php-toolkit.json and invalidates cached config when it changes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "php-toolkit-profile-config-"));
+    try {
+      writeFileSync(join(root, "composer.json"), JSON.stringify({ name: "acme/demo" }));
+      writeFileSync(
+        join(root, "php-toolkit.json"),
+        JSON.stringify({
+          architecture: {
+            layers: { Domain: { namespaces: ["App\\Domain\\"], mayDependOn: [] } },
+          },
+        }),
+      );
+      const cache = new ProjectProfileCache();
+      const before = await cache.resolve(root, null);
+      expect(before.toolkitConfig?.config.architecture?.layers.Domain.namespaces).toEqual([
+        "App\\Domain\\",
+      ]);
+
+      writeFileSync(
+        join(root, "php-toolkit.json"),
+        JSON.stringify({
+          architecture: {
+            layers: {
+              Domain: { namespaces: ["App\\Domain\\"], mayDependOn: [] },
+              Application: { namespaces: ["App\\Application\\"], mayDependOn: ["Domain"] },
+            },
+          },
+        }),
+      );
+      const after = await cache.resolve(root, null);
+      expect(after.toolkitConfig?.config.architecture?.layers.Application.mayDependOn).toEqual([
+        "Domain",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not share entries between roots with the same subpath", async () => {
     const cache = new ProjectProfileCache();
     const a = await cache.resolve(fixture("php-library"), null);
@@ -88,5 +146,24 @@ describe("ProjectProfileCache", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("invalidates cached CI metadata when a workflow is added", async () => {
+    const root = mkdtempSync(join(tmpdir(), "php-toolkit-profile-ci-"));
+    writeFileSync(
+      join(root, "composer.json"),
+      JSON.stringify({ name: "acme/demo", require: { php: ">=8.1" } }),
+    );
+    mkdirSync(join(root, ".github/workflows"), { recursive: true });
+    const cache = new ProjectProfileCache();
+
+    const before = await cache.resolve(root, null);
+    expect(before.ci.providers).toEqual([]);
+
+    writeFileSync(join(root, ".github/workflows/ci.yml"), "php-version: ['8.3']\n");
+    const after = await cache.resolve(root, null);
+
+    expect(after.ci.providers).toEqual(["github-actions"]);
+    expect(after.ci.phpVersions).toEqual(["8.3"]);
   });
 });

@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `/php-design` for concise risk-based design notes and `/php-architect` for significant design decisions that always wait for user approval.
+- The `php-architect` read-only design agent; postinstall copies it into the OpenCode agents directory without overwriting an existing customized file.
+- `php_architecture_scan`, a bounded read-only PHP tokenizer scanner with explicit `php-toolkit.json` layer boundaries, labeled heuristic hypotheses, and project-isolated caching.
+- Opt-in `architectureScan: "auto"` summaries for Architecture Design tasks; context includes result counts only.
+- `php_verify` architecture checks for configured layers, while retaining configured Deptrac checks.
+- Scanner status counts and last-run status in `/php-toolkit-status` and local metrics.
+- Explicit `php_verify` mappings for existing Composer test, static-analysis and style scripts, plus safe CI convention summaries.
+
 ## [0.4.0] - 2026-11-09
 
 ### Added

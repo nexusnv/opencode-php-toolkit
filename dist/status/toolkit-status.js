@@ -40,6 +40,26 @@ function projectLine(profile) {
     details.push(frameworks.length ? frameworks.join(" + ") : "no framework");
     return `  Project: ${profile.root} (${details.join(", ")})`;
 }
+function projectConventions(profile) {
+    const lines = [];
+    const scripts = profile.toolkitConfig?.config.verification?.composerScripts;
+    if (scripts) {
+        const mapped = ["tests", "static", "style"]
+            .filter((check) => typeof scripts[check] === "string")
+            .map((check) => `${check}=${scripts[check]}`);
+        if (mapped.length)
+            lines.push(`  Configured verification scripts: ${mapped.join(", ")}`);
+    }
+    const ci = profile.ci;
+    if (ci && (ci.providers.length || ci.phpVersions.length || ci.tools.length)) {
+        const details = [
+            ci.phpVersions.length ? `PHP: ${ci.phpVersions.join(", ")}` : "",
+            ci.tools.length ? `tools: ${ci.tools.join(", ")}` : "",
+        ].filter(Boolean);
+        lines.push(`  CI conventions: ${ci.providers.join(", ") || "unknown provider"}${details.length ? ` (${details.join("; ")})` : ""}`);
+    }
+    return lines;
+}
 function list(values) {
     return values.length ? values.join(", ") : "none";
 }
@@ -58,6 +78,12 @@ function verificationLine(verification) {
     }
     return `  Verify: last run ${formatTimestamp(verification.lastRunAt)} — ${verification.lastStatus ?? "unknown"} (${verification.runs} run(s), ${verification.findings} finding(s))`;
 }
+function scannerLine(scanner) {
+    if (!scanner || scanner.runs === 0 || !scanner.lastRunAt)
+        return "  Architecture scan: not run yet";
+    const cache = scanner.lastCacheMode ? `; ${scanner.lastCacheMode} cache` : "";
+    return `  Architecture scan: ${scanner.lastStatus ?? "unknown"} (${scanner.findings} findings, ${scanner.hypotheses} hypotheses${cache})`;
+}
 export function renderToolkitStatus(input) {
     const { profile, state, config } = input;
     const lines = ["PHP toolkit status"];
@@ -67,6 +93,7 @@ export function renderToolkitStatus(input) {
     else {
         lines.push(projectLine(profile));
         lines.push(`  Root: ${profile.root} (subpath: ${profile.subpath ?? "none"})`);
+        lines.push(...projectConventions(profile));
     }
     if (!state) {
         lines.push("  Task: unavailable");
@@ -98,6 +125,7 @@ export function renderToolkitStatus(input) {
     }
     lines.push(`  Mode: ${config.architectureMode} | scan: ${config.architectureScan} | announce: ${config.announceSelections}`);
     lines.push(verificationLine(input.verification));
+    lines.push(scannerLine(input.scanner));
     return lines.join("\n");
 }
 export async function buildCurrentStatusSnapshot(ctx, input) {
@@ -111,6 +139,7 @@ export async function buildCurrentStatusSnapshot(ctx, input) {
             state: null,
             config: input.config,
             verification: null,
+            scanner: null,
         });
     }
     const subpath = session?.subpath ?? null;
@@ -145,6 +174,7 @@ export async function buildCurrentStatusSnapshot(ctx, input) {
         state: view,
         config: input.config,
         verification: (await input.verificationFor?.(root)) ?? null,
+        scanner: (await input.scannerFor?.(root)) ?? null,
     });
 }
 //# sourceMappingURL=toolkit-status.js.map

@@ -207,6 +207,59 @@ const phpTestFile = [
 ];
 
 describe("plugin routing integration", () => {
+  it("dispatches distinct fluid-design and approval-gated architect commands", async () => {
+    const { fake, cleanup } = await setupPlugin();
+    const design = fake.commands.find((command) => command.name === "php-design");
+    const architect = fake.commands.find((command) => command.name === "php-architect");
+
+    expect(design).toBeDefined();
+    expect(architect).toBeDefined();
+
+    await design!.execute({
+      sessionID: "s1",
+      prompt: { text: "Add a small value object." },
+      delivery: {} as never,
+    });
+    const designPrompt = fake.prompted.at(-1)?.text ?? "";
+    expect(designPrompt).toContain("Add a small value object.");
+    expect(designPrompt).toContain("Small and reversible");
+
+    await architect!.execute({
+      sessionID: "s1",
+      prompt: { text: "Redesign the persistence boundary." },
+      delivery: {} as never,
+    });
+    const architectPrompt = fake.prompted.at(-1)?.text ?? "";
+    expect(architectPrompt).toContain("Redesign the persistence boundary.");
+    expect(architectPrompt).toContain("always stops after presenting");
+    await cleanup();
+  });
+
+  it("registers php_architecture_scan by default and honors scan opt-out", async () => {
+    const enabled = await setupPlugin();
+    expect(enabled.fake.tools.some((tool) => tool.name === "architecture_scan")).toBe(true);
+    await enabled.cleanup();
+
+    const disabled = await setupPlugin({ options: { architectureScan: "off" } });
+    expect(disabled.fake.tools.some((tool) => tool.name === "architecture_scan")).toBe(false);
+    await disabled.cleanup();
+  });
+
+  it("adds only aggregate scan counts to context in opt-in Architecture Design mode", async () => {
+    const { fake, cleanup } = await setupPlugin({ options: { architectureScan: "auto" }, agent: null });
+    try {
+      await fake.triggerPromptHook(promptEvent("s1", "Design the architecture boundaries for this PHP application.", { files: phpFile }));
+      const context = { sessionID: "s1", system: [] as Array<{ type: string; text: string; metadata?: Record<string, unknown> }> };
+      await fake.triggerContextHook(context);
+      const summary = context.system.map((part) => part.text).find((text) => text.startsWith("Architecture scan summary:"));
+      expect(summary).toMatch(/\d+ finding\(s\), \d+ hypothesis\/hypotheses, \d+ structural metric\(s\)/);
+      expect(summary).not.toContain("Example.php");
+      expect(summary).not.toContain("evidence");
+    } finally {
+      await cleanup();
+    }
+  });
+
   it("attaches php-testing for a build prompt with PHP test files", async () => {
     const { fake, cleanup } = await setupPlugin();
     const event = promptEvent("s1", "Add a new feature with tests", {

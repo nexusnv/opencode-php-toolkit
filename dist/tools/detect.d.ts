@@ -8,7 +8,14 @@ export interface PhpProjectInfo {
     autoloadPsr4: Record<string, string[]>;
     require: Record<string, string>;
     requireDev: Record<string, string>;
-    scripts: Record<string, string>;
+    /** Script names only; bodies remain local to Composer validation. */
+    scriptNames: string[];
+    scriptTools: string[];
+    ci: {
+        providers: string[];
+        phpVersions: string[];
+        tools: string[];
+    };
     detectedTools: {
         phpunit: boolean;
         pest: boolean;

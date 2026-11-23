@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import { access, readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { PKG_ROOT } from "./content.js";
+import { readProjectToolkitConfig, type ProjectToolkitConfigResult } from "./project-config.js";
 import { detectPhpProject } from "./tools/detect.js";
+import { readTextPrefix } from "./tools/bounded-read.js";
 
 export type ProjectType = "application" | "library" | "unknown";
 export type Confidence = "high" | "medium" | "low";
@@ -20,6 +22,9 @@ export interface ProjectProfile {
   autoloadPsr4: Record<string, string[]>;
   packageName: string | null;
   packageType: string | null;
+  composerScriptNames: string[];
+  composerScriptTools: string[];
+  ci: { providers: string[]; phpVersions: string[]; tools: string[] };
   frameworkHints: FrameworkHint[];
   tools: {
     phpunit: boolean;
@@ -42,6 +47,7 @@ export interface ProjectProfile {
     deptrac: string | null;
     architecture: string | null;
   };
+  toolkitConfig: ProjectToolkitConfigResult;
   layout: {
     sourceRoots: string[];
     testRoots: string[];
@@ -178,9 +184,31 @@ async function releaseMetadata(root: string): Promise<boolean> {
 
 async function hashedFiles(root: string): Promise<string[]> {
   const configFiles = await probeConfigFiles(root);
+  const ciFiles: string[] = [];
+  try {
+    const workflows = await readdir(join(root, ".github/workflows"), { withFileTypes: true });
+    ciFiles.push(
+      ...workflows
+        .filter((entry) => entry.isFile() && /\.ya?ml$/i.test(entry.name))
+        .map((entry) => `.github/workflows/${entry.name}`)
+        .sort()
+        .slice(0, 16),
+    );
+  } catch {
+    // GitHub Actions is not configured.
+  }
+  for (const name of [
+    ".gitlab-ci.yml",
+    ".circleci/config.yml",
+    "bitbucket-pipelines.yml",
+    "azure-pipelines.yml",
+  ]) {
+    if (await exists(join(root, name))) ciFiles.push(name);
+  }
   return [
     "composer.json",
     ...Object.values(configFiles).filter((name): name is string => typeof name === "string"),
+    ...ciFiles.slice(0, 20),
   ].sort();
 }
 
@@ -204,7 +232,16 @@ async function computeFingerprint(root: string): Promise<string> {
   const parts: string[] = [await packageVersion()];
   for (const name of files) {
     try {
-      parts.push(`${name}\0${await readFile(join(root, name), "utf8")}`);
+      const path = join(root, name);
+      const isCiManifest = /(?:\.ya?ml)$/i.test(name) &&
+        (name.startsWith(".github/workflows/") || name.startsWith(".circleci/") || name.startsWith(".gitlab-ci") || name.startsWith("bitbucket-pipelines") || name.startsWith("azure-pipelines"));
+      if (isCiManifest) {
+        const info = await stat(path);
+        const prefix = await readTextPrefix(path, 128 * 1024);
+        parts.push(`${name}\0${info.size}\0${info.mtimeMs}\0${prefix}`);
+      } else {
+        parts.push(`${name}\0${await readFile(path, "utf8")}`);
+      }
     } catch {
       // A config that vanished between probing and hashing simply drops out.
     }
@@ -287,6 +324,7 @@ export async function buildProjectProfile(
 ): Promise<ProjectProfile> {
   const info = await detectPhpProject(root);
   const configFiles = await probeConfigFiles(root);
+  const toolkitConfig = await readProjectToolkitConfig(root);
   const identity = await readComposerIdentity(root);
 
   const [hasPublicIndex, hasConsoleBin, hasConfigDir, hasMigrations, templates, views, release] =
@@ -386,6 +424,9 @@ export async function buildProjectProfile(
     autoloadPsr4: psr4,
     packageName: identity.packageName,
     packageType: identity.packageType,
+    composerScriptNames: info.scriptNames,
+    composerScriptTools: info.scriptTools,
+    ci: info.ci,
     frameworkHints: frameworks.hints,
     tools: {
       phpunit: info.detectedTools.phpunit,
@@ -399,6 +440,7 @@ export async function buildProjectProfile(
       infection: info.detectedTools.infection,
     },
     configFiles,
+    toolkitConfig,
     layout: {
       sourceRoots: [...new Set(Object.values(psr4).flat())],
       testRoots,

@@ -309,7 +309,7 @@ describe("architectureCheck", () => {
     expect(result).toMatchObject({ status: "skipped", reason: "scanner-unavailable" });
   });
 
-  it("reports configured boundaries as scanner-unavailable", async () => {
+  it("does not infer boundaries from a config file without validated layers", async () => {
     const root = project(["src/A.php"]);
     const base = env(root);
     const result = await architectureCheck(
@@ -321,7 +321,105 @@ describe("architectureCheck", () => {
       }),
     );
     expect(result).toMatchObject({ status: "skipped", reason: "scanner-unavailable" });
-    expect(result.summary).toContain("configured boundaries");
+    expect(result.summary).toContain("no valid explicit architecture layers");
+  });
+
+  it("runs configured explicit boundaries through the scanner and counts only findings", async () => {
+    const root = project(["src/A.php"]);
+    const base = env(root);
+    const scanJson = JSON.stringify({
+      status: "ok",
+      scannerVersion: "1",
+      filesScanned: 1,
+      truncated: false,
+      diagnostics: [],
+      results: [
+        { kind: "finding", severity: "error", file: "src/A.php", line: 3, message: "Domain may not depend on Infrastructure", evidence: "App\\Infrastructure\\Db" },
+        { kind: "hypothesis", severity: "info", file: "src/A.php", line: 8, message: "Review branch complexity", candidatePatterns: ["branching-logic"] },
+      ],
+    });
+    let command = "";
+    const result = await architectureCheck(env(root, {
+      profile: {
+        ...base.profile,
+        fingerprint: "profile",
+        lockFingerprint: null,
+        subpath: null,
+        toolkitConfig: {
+          config: { architecture: { layers: { Domain: { namespaces: ["App\\Domain\\"], mayDependOn: [] } }, exclude: [] }, routing: { disableSkills: [], extraSkills: [] }, verification: null },
+          diagnostics: [], present: true,
+        },
+        configFiles: { ...base.profile.configFiles, architecture: "php-toolkit.json" },
+      } as unknown as ProjectProfile,
+      runner: runner((cmd) => { command = cmd; return { stdout: scanJson }; }),
+    }));
+    expect(command).toBe("php");
+    expect(result).toMatchObject({ status: "failed", findings: 1 });
+    expect(result.detail).toContain("Domain may not depend on Infrastructure");
+    expect(result.detail).toContain("hypothesis: ");
+  });
+
+  it("does not pass when the configured scanner fails", async () => {
+    const root = project(["src/A.php"]);
+    const base = env(root);
+    const result = await architectureCheck(env(root, {
+      profile: {
+        ...base.profile,
+        fingerprint: "profile-failure",
+        lockFingerprint: null,
+        subpath: null,
+        toolkitConfig: { config: { architecture: { layers: { Domain: { namespaces: ["App\\Domain\\"], mayDependOn: [] } }, exclude: [] }, routing: { disableSkills: [], extraSkills: [] }, verification: null }, diagnostics: [], present: true },
+        configFiles: { ...base.profile.configFiles, architecture: "php-toolkit.json" },
+      } as unknown as ProjectProfile,
+      runner: runner(() => ({ stdout: "not JSON" })),
+    }));
+    expect(result.status).not.toBe("passed");
+  });
+
+  it("does not report a truncated architecture scan as passed", async () => {
+    const root = project(["src/A.php"]);
+    const base = env(root);
+    const scanJson = JSON.stringify({ status: "ok", scannerVersion: "1", filesScanned: 1, truncated: true, diagnostics: [], results: [] });
+    const result = await architectureCheck(env(root, {
+      profile: {
+        ...base.profile,
+        toolkitConfig: { config: { architecture: { layers: { Domain: { namespaces: ["App\\Domain\\"], mayDependOn: [] } }, exclude: [] }, routing: { disableSkills: [], extraSkills: [] }, verification: null }, diagnostics: [], present: true },
+        configFiles: { ...base.profile.configFiles, architecture: "php-toolkit.json" },
+      } as unknown as ProjectProfile,
+      runner: runner(() => ({ stdout: scanJson })),
+    }));
+    expect(result.status).not.toBe("passed");
+    expect(result.summary).toContain("incomplete");
+  });
+
+  it("does not report boundary-disabled scanner diagnostics as clean", async () => {
+    const root = project(["src/A.php"]);
+    const base = env(root);
+    const scanJson = JSON.stringify({ status: "ok", scannerVersion: "1", filesScanned: 1, truncated: false, diagnostics: ["architecture.layers is invalid; boundaries are disabled"], results: [] });
+    const result = await architectureCheck(env(root, {
+      profile: {
+        ...base.profile,
+        toolkitConfig: { config: { architecture: { layers: { Domain: { namespaces: ["App\\Domain\\"], mayDependOn: [] } }, exclude: [] }, routing: { disableSkills: [], extraSkills: [] }, verification: null }, diagnostics: [], present: true },
+        configFiles: { ...base.profile.configFiles, architecture: "php-toolkit.json" },
+      } as unknown as ProjectProfile,
+      runner: runner(() => ({ stdout: scanJson })),
+    }));
+    expect(result.status).not.toBe("passed");
+    expect(result.summary).toContain("diagnostic");
+  });
+
+  it("reports invalid boundaries as skipped with their diagnostic", async () => {
+    const root = project(["src/A.php"]);
+    const base = env(root);
+    const result = await architectureCheck(env(root, {
+      profile: {
+        ...base.profile,
+        configFiles: { ...base.profile.configFiles, architecture: "php-toolkit.json" },
+        toolkitConfig: { config: { architecture: null, routing: { disableSkills: [], extraSkills: [] }, verification: null }, diagnostics: ["architecture layer is invalid"], present: true },
+      } as unknown as ProjectProfile,
+    }));
+    expect(result).toMatchObject({ status: "skipped", reason: "scanner-unavailable" });
+    expect(result.summary).toContain("invalid");
   });
 
   it("is unavailable when Deptrac is configured but not installed", async () => {

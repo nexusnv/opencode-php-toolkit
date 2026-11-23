@@ -94,6 +94,16 @@ describe("recordVerification", () => {
   });
 });
 
+describe("recordScanner", () => {
+  it("stores only aggregate counts, status, cache mode, and timestamp", async () => {
+    const store = new MetricsStore(memoryStorage(), project);
+    await store.recordScanner({ status: "ok", findings: 2, hypotheses: 3, truncated: true, cacheHit: true, cacheMode: "metadata" });
+    const scanner = store.getSnapshot().scanner;
+    expect(scanner).toMatchObject({ runs: 1, findings: 2, hypotheses: 3, truncated: 1, cacheHits: 1, cacheModes: { metadata: 1 }, lastStatus: "ok" });
+    expect(JSON.stringify(scanner)).not.toMatch(/path|evidence|Example\.php/i);
+  });
+});
+
 describe("verification merge and migration", () => {
   it("sums counters and keeps the later last run", () => {
     const base: MetricsDelta = {

@@ -45,6 +45,8 @@ function metrics(overrides: Partial<PhpToolkitMetrics> = {}): PhpToolkitMetrics 
       cacheHits: 0,
       cacheModes: { content: 0, metadata: 0 },
       lastRunAt: null,
+      lastStatus: null,
+      lastCacheMode: null,
     },
     ...overrides,
   };

@@ -66,6 +66,54 @@ describe("renderToolkitStatus", () => {
     expect(text).toContain("2 run(s), 3 finding(s)");
   });
 
+  it("renders privacy-safe architecture scan counts without source evidence", () => {
+    const text = renderToolkitStatus({
+      profile: null,
+      state: null,
+      config: DEFAULT_TOOLKIT_CONFIG,
+      scanner: {
+        runs: 1,
+        findings: 2,
+        hypotheses: 3,
+        truncated: 1,
+        cacheHits: 1,
+        cacheModes: { content: 0, metadata: 1 },
+        lastRunAt: "2026-11-23T00:00:00.000Z",
+        lastStatus: "ok",
+        lastCacheMode: "metadata",
+      },
+    });
+    expect(text).toContain("Architecture scan: ok (2 findings, 3 hypotheses; metadata cache)");
+    expect(text).not.toContain("Example.php");
+    expect(text).not.toContain("evidence");
+  });
+
+  it("shows mapped check names and CI summaries without command or YAML bodies", () => {
+    const text = renderToolkitStatus({
+      profile: {
+        root: "/repo/app",
+        subpath: null,
+        type: "application",
+        typeConfidence: "high",
+        phpRequirement: ">=8.2",
+        frameworkHints: ["none"],
+        tools: {},
+        toolkitConfig: {
+          config: { verification: { composerScripts: { tests: "ci-test", static: "analyse" } } },
+          diagnostics: [],
+          present: true,
+        },
+        ci: { providers: ["github-actions"], phpVersions: ["8.2", "8.3"], tools: ["phpunit", "phpstan"] },
+      } as never,
+      state: null,
+      config: DEFAULT_TOOLKIT_CONFIG,
+    });
+    expect(text).toContain("Configured verification scripts: tests=ci-test, static=analyse");
+    expect(text).toContain("CI conventions: github-actions (PHP: 8.2, 8.3; tools: phpunit, phpstan)");
+    expect(text).not.toContain("run: vendor/bin");
+    expect(text).not.toContain("SECRET_VALUE");
+  });
+
   it("says verification has not run yet", () => {
     const text = renderToolkitStatus({
       profile: null,

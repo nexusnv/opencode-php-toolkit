@@ -32,6 +32,14 @@ export declare const COMMAND_DEFS: readonly [{
     readonly name: "php-upgrade";
     readonly fallback: "Plan PHP 8.1+ upgrade with Rector dry-run";
 }, {
+    readonly file: "commands/php-design.md";
+    readonly name: "php-design";
+    readonly fallback: "Shape a PHP design with risk-based approval";
+}, {
+    readonly file: "commands/php-architect.md";
+    readonly name: "php-architect";
+    readonly fallback: "Plan a significant PHP architecture change and wait for approval";
+}, {
     readonly file: "commands/php-scaffold.md";
     readonly name: "php-scaffold";
     readonly fallback: "Scaffold PSR-4 PHP class + test";
