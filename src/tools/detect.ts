@@ -204,10 +204,27 @@ async function detectCiConventions(root: string): Promise<{ providers: string[];
     try {
       const text = await readTextPrefix(path, Math.min(128 * 1024, remainingBytes));
       totalBytes += Buffer.byteLength(text, "utf8");
-      for (const line of text.split(/\r?\n/)) {
-        if (/php/i.test(line)) {
-          for (const match of line.matchAll(/\b(?:7|8|9)\.\d+(?:\.\d+)?\b/g)) versions.add(match[0]);
+      const lines = text.split(/\r?\n/);
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index]!;
+        const phpKey = line.match(/^(\s*)php(?:[-_]version)?\s*:\s*(.*)$/i);
+        if (phpKey) {
+          const indent = phpKey[1]!.length;
+          const value = phpKey[2]!;
+          for (const match of value.matchAll(/\b(?:7|8|9)\.\d+(?:\.\d+)?\b/g)) versions.add(match[0]);
+          if (value.trim() === "") {
+            for (let nested = index + 1; nested < lines.length; nested += 1) {
+              const nestedLine = lines[nested]!;
+              if (nestedLine.trim() === "") continue;
+              const nestedIndent = nestedLine.match(/^\s*/)?.[0].length ?? 0;
+              if (nestedIndent <= indent) break;
+              if (/^\s*-\s*/.test(nestedLine)) {
+                for (const match of nestedLine.matchAll(/\b(?:7|8|9)\.\d+(?:\.\d+)?\b/g)) versions.add(match[0]);
+              }
+            }
+          }
         }
+        for (const match of line.matchAll(/\bphp\s*:\s*["']?v?((?:7|8|9)\.\d+(?:\.\d+)?)/gi)) versions.add(match[1]!);
       }
       for (const tool of knownTools([text])) tools.add(tool);
     } catch { /* unreadable CI files contribute provider presence only. */ }

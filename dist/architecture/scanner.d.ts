@@ -21,6 +21,7 @@ export interface ArchitectureScanResult {
     results: ArchitectureScanItem[];
     diagnostics: string[];
     error?: string;
+    permissionFailure?: "denied" | "approval-required";
 }
 export interface ArchitectureScanOptions {
     runner?: CommandRunner;

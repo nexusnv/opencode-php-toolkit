@@ -545,20 +545,7 @@ function applyDelta(base, delta) {
         triggerHits: base.triggerHits + delta.triggerHits,
         routing: mergeRoutingMetrics(base.routing ?? emptyRoutingMetrics(), delta.routing),
         verification: mergeVerification(base.verification ?? emptyVerificationMetrics(), delta.verification),
-        scanner: {
-            runs: base.scanner.runs + scannerDelta.runs,
-            findings: base.scanner.findings + scannerDelta.findings,
-            hypotheses: base.scanner.hypotheses + scannerDelta.hypotheses,
-            truncated: base.scanner.truncated + scannerDelta.truncated,
-            cacheHits: base.scanner.cacheHits + scannerDelta.cacheHits,
-            cacheModes: {
-                content: base.scanner.cacheModes.content + scannerDelta.cacheModes.content,
-                metadata: base.scanner.cacheModes.metadata + scannerDelta.cacheModes.metadata,
-            },
-            lastRunAt: scannerDelta.lastRunAt ?? base.scanner.lastRunAt,
-            lastStatus: scannerDelta.lastRunAt ? scannerDelta.lastStatus : base.scanner.lastStatus,
-            lastCacheMode: scannerDelta.lastRunAt ? scannerDelta.lastCacheMode : base.scanner.lastCacheMode,
-        },
+        scanner: mergeScannerMetrics(base.scanner, scannerDelta),
     };
 }
 /**

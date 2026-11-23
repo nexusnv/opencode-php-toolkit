@@ -1,15 +1,33 @@
 import { createHash } from "node:crypto";
-import { opendir, readFile, stat } from "node:fs/promises";
+import { lstat, opendir, readFile, realpath, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { join, relative, resolve, sep } from "node:path";
-export const ARCHITECTURE_SCANNER_VERSION = "2";
-const CACHE_PREFIX = "php-toolkit.architecture-scan.v2.";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+export const ARCHITECTURE_SCANNER_VERSION = "4";
+const CACHE_PREFIX = "php-toolkit.architecture-scan.v4.";
 const CONTENT_HASH_LIMIT = 1024 * 1024;
 const CONTENT_HASH_BUDGET = 16 * 1024 * 1024;
 const MAX_DIRECTORY_ENTRIES = 20_000;
 const DEFAULT_MAX_FILES = 500;
 const memoryCache = new Map();
 let toolkitVersionPromise;
+function isWithinRoot(root, path) {
+    const rel = relative(root, path);
+    return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
+}
+async function safePath(root, path, directory) {
+    try {
+        const metadata = await lstat(path);
+        if (metadata.isSymbolicLink() || (directory ? !metadata.isDirectory() : !metadata.isFile()))
+            return null;
+        const canonical = await realpath(path);
+        if (!isWithinRoot(root, canonical))
+            return null;
+        return canonical;
+    }
+    catch {
+        return null;
+    }
+}
 async function toolkitVersion() {
     if (!toolkitVersionPromise) {
         const path = fileURLToPath(new URL("../../package.json", import.meta.url));
@@ -31,11 +49,20 @@ async function phpFiles(root, maxFiles, deadlineAt) {
         if (Date.now() >= deadlineAt)
             return { files: files.sort().slice(0, maxFiles), truncated, timedOut: true };
         const directory = pending.pop();
+        if (!(await safePath(root, directory, true)))
+            continue;
         let handle;
         try {
             handle = await opendir(directory);
         }
         catch {
+            continue;
+        }
+        // The queued path may have been replaced after its Dirent was inspected.
+        // Validate again after opening and before reading entries; a redirected
+        // handle is closed without being traversed.
+        if (!(await safePath(root, directory, true))) {
+            await handle.close().catch(() => undefined);
             continue;
         }
         const entries = [];
@@ -64,7 +91,13 @@ async function phpFiles(root, maxFiles, deadlineAt) {
             if (entry.isDirectory())
                 childDirectories.push(path);
             else if (entry.isFile() && entry.name.toLowerCase().endsWith(".php")) {
-                files.push(relativePath.split(sep).join("/"));
+                const canonical = await safePath(root, path, false);
+                if (!canonical)
+                    continue;
+                const canonicalRelative = relative(root, canonical);
+                if (excluded(canonicalRelative))
+                    continue;
+                files.push(canonicalRelative.split(sep).join("/"));
                 if (files.length > maxFiles) {
                     truncated = true;
                     break;
@@ -78,18 +111,21 @@ async function phpFiles(root, maxFiles, deadlineAt) {
     }
     return { files: files.sort().slice(0, maxFiles), truncated, timedOut: false };
 }
-/** Content fingerprints are exact up to 1 MiB per PHP file; larger files use labeled metadata mode. */
+/** Content fingerprints are exact up to 1 MiB per file and a 16 MiB aggregate budget.
+ * Remaining files use metadata mode.
+ */
 export async function createArchitectureCacheKey(root, profile, maxFiles = 500, deadlineAt = Date.now() + 20_000) {
-    const absoluteRoot = resolve(root);
+    const absoluteRoot = await realpath(resolve(root));
     const cap = Math.max(1, Math.min(DEFAULT_MAX_FILES, Math.floor(maxFiles)));
     const listing = await phpFiles(absoluteRoot, cap, deadlineAt);
     const files = listing.files;
     if (listing.timedOut) {
-        return { key: "", mode: "content", files: files.length, truncated: listing.truncated, timedOut: true };
+        return { key: "", mode: "content", files: files.length, truncated: listing.truncated, timedOut: true, fingerprints: {} };
     }
     const hash = createHash("sha256");
     let mode = "content";
     let hashedBytes = 0;
+    const fingerprints = {};
     hash.update(JSON.stringify({
         root: absoluteRoot,
         subpath: profile.subpath,
@@ -103,29 +139,40 @@ export async function createArchitectureCacheKey(root, profile, maxFiles = 500, 
     }));
     for (const path of files) {
         if (Date.now() >= deadlineAt) {
-            return { key: "", mode, files: files.length, truncated: listing.truncated, timedOut: true };
+            return { key: "", mode, files: files.length, truncated: listing.truncated, timedOut: true, fingerprints };
         }
         const absolutePath = join(absoluteRoot, path);
         try {
-            const fileStat = await stat(absolutePath);
+            const canonical = await safePath(absoluteRoot, absolutePath, false);
+            if (!canonical)
+                throw new Error("PHP file escaped the selected root");
+            const fileStat = await stat(canonical);
             hash.update(`\0${path}\0${fileStat.size}\0`);
             if (fileStat.size <= CONTENT_HASH_LIMIT && hashedBytes + fileStat.size <= CONTENT_HASH_BUDGET) {
-                hash.update(await readFile(absolutePath));
+                const content = await readFile(canonical);
+                const canonicalAfterRead = await safePath(absoluteRoot, absolutePath, false);
+                if (!canonicalAfterRead || canonicalAfterRead !== canonical)
+                    throw new Error("PHP file changed during fingerprinting");
+                const fingerprint = `content:${createHash("sha256").update(content).digest("hex")}`;
+                fingerprints[path] = fingerprint;
+                hash.update(content);
                 hashedBytes += fileStat.size;
             }
             else {
                 mode = "metadata";
-                hash.update(`${fileStat.mtimeMs}\0metadata-only`);
+                fingerprints[path] = `metadata:${fileStat.dev}:${fileStat.ino}:${fileStat.size}:${Math.floor(fileStat.mtimeMs / 1000)}`;
+                hash.update(`${fileStat.dev}\0${fileStat.ino}\0${fileStat.mtimeMs}\0metadata-only`);
             }
             if (Date.now() >= deadlineAt) {
-                return { key: "", mode, files: files.length, truncated: listing.truncated, timedOut: true };
+                return { key: "", mode, files: files.length, truncated: listing.truncated, timedOut: true, fingerprints };
             }
         }
         catch {
             hash.update("\0unreadable");
+            fingerprints[path] = "unreadable";
         }
     }
-    return { key: hash.digest("hex"), mode, files: files.length, truncated: listing.truncated, timedOut: false };
+    return { key: hash.digest("hex"), mode, files: files.length, truncated: listing.truncated, timedOut: false, fingerprints };
 }
 export function architectureCacheStorageKey(key) {
     return `${CACHE_PREFIX}${key}`;

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -53,6 +53,38 @@ describe("architecture cache key", () => {
       expect(identity.truncated).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses metadata fingerprints after the 16 MiB aggregate content budget", async () => {
+    const root = await mkdtemp(join(tmpdir(), "architecture-cache-budget-"));
+    try {
+      const content = "x".repeat(1024 * 1024);
+      for (let index = 0; index < 17; index += 1) {
+        await writeFile(join(root, `File${String(index).padStart(2, "0")}.php`), content);
+      }
+      const identity = await createArchitectureCacheKey(root, await buildProjectProfile(root, null));
+      expect(identity.mode).toBe("metadata");
+      expect(identity.fingerprints["File15.php"]).toMatch(/^content:/);
+      expect(identity.fingerprints["File16.php"]).toMatch(/^metadata:/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not discover PHP files through an external directory symlink", async () => {
+    const root = await mkdtemp(join(tmpdir(), "architecture-cache-symlink-"));
+    const outside = await mkdtemp(join(tmpdir(), "architecture-cache-outside-"));
+    try {
+      await mkdir(join(root, "src"));
+      await writeFile(join(root, "src/Local.php"), "<?php class Local {}\n");
+      await writeFile(join(outside, "External.php"), "<?php class External {}\n");
+      await symlink(outside, join(root, "external"));
+      const identity = await createArchitectureCacheKey(root, await buildProjectProfile(root, null));
+      expect(identity.files).toBe(1);
+      expect(Object.keys(identity.fingerprints)).toEqual(["src/Local.php"]);
+    } finally {
+      await Promise.all([rm(root, { recursive: true, force: true }), rm(outside, { recursive: true, force: true })]);
     }
   });
 });

@@ -52,32 +52,44 @@ export async function architectureCheck(env: CheckEnvironment): Promise<CheckRes
   if (hasBoundaries) {
     const scan = await scanArchitecture(env.root, env.profile, { runner: env.runner, signal: env.signal });
     if (scan.status === "cancelled") return cancelled("architecture", REASONS.aborted, "architecture scan cancelled");
-    if (scan.status === "timed-out") return timedOut("architecture", "architecture scanner timed out");
-    if (scan.status === "unavailable") return unavailable("architecture", REASONS.scannerUnavailable, scan.error ?? "PHP architecture scanner unavailable");
-    if (scan.status === "error") return unavailable("architecture", REASONS.executionFailed, "PHP architecture scanner failed", scan.error ?? null);
-    const findings = scan.results.filter((item) => item.kind === "finding");
-    const hypotheses = scan.results.filter((item) => item.kind === "hypothesis");
-    const detail = [
-      ...findings.map((item) => `${item.file ?? "project"}${item.line ? `:${item.line}` : ""}: ${item.message}${item.evidence ? ` (${item.evidence})` : ""}`),
-      ...hypotheses.map((item) => `hypothesis: ${item.file ?? "project"}: ${item.message} [${item.candidatePatterns?.join(", ") ?? "review"}]`),
-      ...scan.diagnostics.map((item) => `diagnostic: ${item}`),
-    ].join("\n");
-    if (findings.length) {
-      results.push(failed("architecture", `${findings.length} configured boundary violation(s) (PHP scanner)`, findings.length, detail));
-    } else if (!scan.truncated && scan.diagnostics.length === 0) {
-      results.push(passed("architecture", `no configured boundary violations (PHP scanner; ${hypotheses.length} hypothesis/hypotheses)`));
-    }
-    if (scan.truncated || scan.diagnostics.length > 0) {
-      const reasons = [
-        scan.truncated ? "file limit reached" : "",
-        scan.diagnostics.length ? `${scan.diagnostics.length} scanner diagnostic(s)` : "",
-      ].filter(Boolean).join(", ");
-      results.push(unavailable(
+    if (scan.status === "ok") {
+      const findings = scan.results.filter((item) => item.kind === "finding");
+      const hypotheses = scan.results.filter((item) => item.kind === "hypothesis");
+      const detail = [
+        ...findings.map((item) => `${item.file ?? "project"}${item.line ? `:${item.line}` : ""}: ${item.message}${item.evidence ? ` (${item.evidence})` : ""}`),
+        ...hypotheses.map((item) => `hypothesis: ${item.file ?? "project"}: ${item.message} [${item.candidatePatterns?.join(", ") ?? "review"}]`),
+        ...scan.diagnostics.map((item) => `diagnostic: ${item}`),
+      ].join("\n");
+      if (findings.length) {
+        results.push(failed("architecture", `${findings.length} configured boundary violation(s) (PHP scanner)`, findings.length, detail));
+      } else if (!scan.truncated && scan.diagnostics.length === 0) {
+        results.push(passed("architecture", `no configured boundary violations (PHP scanner; ${hypotheses.length} hypothesis/hypotheses)`));
+      }
+      if (scan.truncated || scan.diagnostics.length > 0) {
+        const reasons = [
+          scan.truncated ? "file limit reached" : "",
+          scan.diagnostics.length ? `${scan.diagnostics.length} scanner diagnostic(s)` : "",
+        ].filter(Boolean).join(", ");
+        results.push(unavailable(
+          "architecture",
+          REASONS.scannerUnavailable,
+          `PHP architecture scan incomplete (${reasons})`,
+          scan.diagnostics.length ? scan.diagnostics.join("\n") : null,
+        ));
+      }
+    } else if (scan.status === "timed-out") {
+      results.push(timedOut("architecture", "architecture scanner timed out"));
+    } else if (scan.status === "unavailable" && scan.permissionFailure) {
+      results.push(cancelled(
         "architecture",
-        REASONS.scannerUnavailable,
-        `PHP architecture scan incomplete (${reasons})`,
-        scan.diagnostics.length ? scan.diagnostics.join("\n") : null,
+        scan.permissionFailure === "denied" ? REASONS.permissionDenied : REASONS.approvalRequired,
+        scan.permissionFailure === "denied" ? "PHP command denied by session permissions" : "PHP command requires approval",
+        scan.error ?? null,
       ));
+    } else if (scan.status === "unavailable") {
+      results.push(unavailable("architecture", REASONS.scannerUnavailable, scan.error ?? "PHP architecture scanner unavailable"));
+    } else if (scan.status === "error") {
+      results.push(unavailable("architecture", REASONS.executionFailed, "PHP architecture scanner failed", scan.error ?? null));
     }
   }
 

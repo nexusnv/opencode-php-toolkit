@@ -8,7 +8,8 @@ import { testsCheck } from "../src/verify/checks/tests.js";
 import { MAX_STYLE_FILES, styleCheck } from "../src/verify/checks/style.js";
 import type { CheckEnvironment } from "../src/verify/checks/shared.js";
 import type { ChangedScope } from "../src/verify/changed.js";
-import type { CommandRunner, RunResult } from "../src/tools/runner.js";
+import { PERMISSION_DENIED_CODE, type CommandRunner, type RunResult } from "../src/tools/runner.js";
+import { REASONS } from "../src/verify/types.js";
 
 type Script = (cmd: string, args: readonly string[]) => Partial<RunResult>;
 
@@ -374,6 +375,60 @@ describe("architectureCheck", () => {
       runner: runner(() => ({ stdout: "not JSON" })),
     }));
     expect(result.status).not.toBe("passed");
+  });
+
+  it("maps PHP permission refusals to permission cancellation and still runs Deptrac", async () => {
+    const root = project(["src/A.php"]);
+    binary(root, "vendor/bin/deptrac");
+    const base = env(root);
+    const calls: string[] = [];
+    const result = await architectureCheck(env(root, {
+      profile: {
+        ...base.profile,
+        fingerprint: "profile-permission",
+        lockFingerprint: null,
+        subpath: null,
+        tools: { ...base.profile.tools, deptrac: true },
+        toolkitConfig: {
+          config: { architecture: { layers: { Domain: { namespaces: ["App\\Domain\\"], mayDependOn: [] } }, exclude: [] }, routing: { disableSkills: [], extraSkills: [] }, verification: null },
+          diagnostics: [], present: true,
+        },
+        configFiles: { ...base.profile.configFiles, architecture: "php-toolkit.json" },
+      } as unknown as ProjectProfile,
+      runner: runner((cmd) => {
+        calls.push(cmd);
+        return cmd === "php" ? { ok: false, code: PERMISSION_DENIED_CODE, stderr: "blocked" } : {};
+      }),
+    }));
+    expect(calls).toEqual(["php", join(root, "vendor/bin/deptrac")]);
+    expect(result).toMatchObject({ status: "cancelled", reason: REASONS.permissionDenied });
+  });
+
+  it("keeps a missing PHP CLI unavailable and continues to configured Deptrac", async () => {
+    const root = project(["src/A.php"]);
+    binary(root, "vendor/bin/deptrac");
+    const base = env(root);
+    const calls: string[] = [];
+    const result = await architectureCheck(env(root, {
+      profile: {
+        ...base.profile,
+        fingerprint: "profile-missing-php",
+        lockFingerprint: null,
+        subpath: null,
+        tools: { ...base.profile.tools, deptrac: true },
+        toolkitConfig: {
+          config: { architecture: { layers: { Domain: { namespaces: ["App\\Domain\\"], mayDependOn: [] } }, exclude: [] }, routing: { disableSkills: [], extraSkills: [] }, verification: null },
+          diagnostics: [], present: true,
+        },
+        configFiles: { ...base.profile.configFiles, architecture: "php-toolkit.json" },
+      } as unknown as ProjectProfile,
+      runner: runner((cmd) => {
+        calls.push(cmd);
+        return cmd === "php" ? { ok: false, code: "ENOENT", stderr: "spawn php ENOENT" } : {};
+      }),
+    }));
+    expect(calls).toEqual(["php", join(root, "vendor/bin/deptrac")]);
+    expect(result.status).toBe("unavailable");
   });
 
   it("does not report a truncated architecture scan as passed", async () => {

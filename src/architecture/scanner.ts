@@ -30,6 +30,7 @@ export interface ArchitectureScanResult {
   results: ArchitectureScanItem[];
   diagnostics: string[];
   error?: string;
+  permissionFailure?: "denied" | "approval-required";
 }
 
 export interface ArchitectureScanOptions {
@@ -44,17 +45,34 @@ export interface ArchitectureScanOptions {
 const OUTPUT_LIMIT = 1024 * 1024;
 const TIMEOUT_MS = 20_000;
 const SCRIPT_PATH = fileURLToPath(new URL("../../scripts/architecture-scan.php", import.meta.url));
+type ScannerPayload = Omit<ArchitectureScanResult, "cacheHit" | "cacheMode"> & {
+  fingerprints?: Record<string, string>;
+};
 
-function failure(status: ArchitectureScanResult["status"], message: string): ArchitectureScanResult {
-  return { status, cacheHit: false, cacheMode: null, filesScanned: 0, truncated: false, results: [], diagnostics: [], error: message };
+function failure(
+  status: ArchitectureScanResult["status"],
+  message: string,
+  permissionFailure?: ArchitectureScanResult["permissionFailure"],
+): ArchitectureScanResult {
+  return {
+    status,
+    cacheHit: false,
+    cacheMode: null,
+    filesScanned: 0,
+    truncated: false,
+    results: [],
+    diagnostics: [],
+    error: message,
+    ...(permissionFailure ? { permissionFailure } : {}),
+  };
 }
 
-function parsePayload(raw: string): Omit<ArchitectureScanResult, "cacheHit" | "cacheMode"> | null {
+function parsePayload(raw: string): ScannerPayload | null {
   let value: unknown;
   try { value = JSON.parse(raw); } catch { return null; }
   if (!value || typeof value !== "object") return null;
   const payload = value as Record<string, unknown>;
-  if (payload.status !== "ok" || !Array.isArray(payload.results) || !Array.isArray(payload.diagnostics) ||
+  if (!(payload.status === "ok" || payload.status === "error") || !Array.isArray(payload.results) || !Array.isArray(payload.diagnostics) ||
       typeof payload.filesScanned !== "number" || typeof payload.truncated !== "boolean") return null;
   const results: ArchitectureScanItem[] = [];
   for (const item of payload.results) {
@@ -75,12 +93,18 @@ function parsePayload(raw: string): Omit<ArchitectureScanResult, "cacheHit" | "c
     });
   }
   if (!payload.diagnostics.every((item) => typeof item === "string")) return null;
+  if (payload.fingerprints !== undefined && (!payload.fingerprints || typeof payload.fingerprints !== "object" ||
+      Array.isArray(payload.fingerprints) || !Object.values(payload.fingerprints).every((item) => typeof item === "string"))) return null;
   return {
-    status: "ok",
+    status: payload.status,
     filesScanned: Math.max(0, Math.floor(payload.filesScanned)),
     truncated: payload.truncated,
     diagnostics: (payload.diagnostics as string[]).map((item) => item.slice(0, 1000)).slice(0, 100),
     results: results.slice(0, 10_000),
+    ...(payload.fingerprints ? { fingerprints: payload.fingerprints as Record<string, string> } : {}),
+    ...(payload.status === "error"
+      ? { error: ((payload.diagnostics as string[]).join("\n") || "PHP architecture scan was incomplete.").slice(0, 2000) }
+      : {}),
   };
 }
 
@@ -110,14 +134,28 @@ export async function scanArchitecture(
   if (run.aborted || options.signal?.aborted) return failure("cancelled", "Architecture scan was cancelled.");
   if (run.killed) return failure("timed-out", `Architecture scanner exceeded its ${Math.ceil(timeoutMs / 1000)} second limit.`);
   if (run.code === PERMISSION_DENIED_CODE || run.code === PERMISSION_APPROVAL_CODE) {
-    return failure("unavailable", run.stderr || "PHP execution was blocked by command permissions.");
+    return failure(
+      "unavailable",
+      run.stderr || "PHP execution was blocked by command permissions.",
+      run.code === PERMISSION_DENIED_CODE ? "denied" : "approval-required",
+    );
   }
   if (isMissingBinary(run)) return failure("unavailable", "PHP CLI was not found on PATH.");
   if (!run.ok) return failure("error", (run.stderr || "PHP architecture scanner failed.").slice(0, 2000));
   if (Buffer.byteLength(run.stdout, "utf8") > OUTPUT_LIMIT) return failure("error", "Architecture scanner output exceeded the 1 MiB limit.");
   const payload = parsePayload(run.stdout);
   if (!payload) return failure("error", "PHP architecture scanner returned invalid JSON or an unsupported result shape.");
-  const result: ArchitectureScanResult = { ...payload, cacheHit: false, cacheMode: identity.mode };
-  if (!identity.truncated) await writeArchitectureCache(identity.key, payload, options.storage);
+  const { fingerprints, ...scanPayload } = payload;
+  const result: ArchitectureScanResult = { ...scanPayload, cacheHit: false, cacheMode: identity.mode };
+  if (payload.status !== "ok") return result;
+  const expectedPaths = Object.keys(identity.fingerprints).sort();
+  const actualPaths = Object.keys(fingerprints ?? {}).sort();
+  const fingerprintsMatch = fingerprints !== undefined &&
+    payload.filesScanned === expectedPaths.length &&
+    expectedPaths.length === actualPaths.length &&
+    expectedPaths.every((path, index) => path === actualPaths[index] && identity.fingerprints[path] === fingerprints[path]);
+  if (!identity.truncated && fingerprintsMatch) {
+    await writeArchitectureCache(identity.key, scanPayload, options.storage);
+  }
   return result;
 }

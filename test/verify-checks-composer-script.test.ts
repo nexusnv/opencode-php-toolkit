@@ -106,6 +106,15 @@ describe("explicit Composer verification scripts", () => {
     expect(report.checks[0]).toMatchObject({ status: "unavailable", reason: "not-installed" });
   });
 
+  it("does not mistake Composer script output for a missing binary", async () => {
+    const root = makeRoot();
+    const report = await phpVerify(
+      { scope: "all", checks: ["tests"] },
+      makeDeps(root, async () => result({ ok: false, code: 2, stderr: "command not found" })),
+    );
+    expect(report.checks[0]).toMatchObject({ status: "failed", detail: "command not found" });
+  });
+
   it("reports timeout and abort outcomes without counting findings", async () => {
     const root = makeRoot();
     const timeout = await phpVerify(

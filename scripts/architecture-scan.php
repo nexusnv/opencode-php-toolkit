@@ -3,8 +3,10 @@ declare(strict_types=1);
 
 /** Dependency-free, read-only PHP structure scanner. */
 
-const SCANNER_VERSION = '2';
+const SCANNER_VERSION = '4';
 const MAX_DIRECTORY_ENTRIES = 20000;
+const CONTENT_HASH_LIMIT = 1048576;
+const CONTENT_HASH_BUDGET = 16777216;
 
 function emit(array $payload): never
 {
@@ -43,10 +45,14 @@ function readConfig(string $root): array
     $path = $root . DIRECTORY_SEPARATOR . 'php-toolkit.json';
     if (!is_file($path)) return [[], []];
     $raw = file_get_contents($path);
+    $shape = is_string($raw) ? json_decode($raw) : null;
     $data = is_string($raw) ? json_decode($raw, true) : null;
-    if (!is_array($data)) return [[], ['php-toolkit.json is malformed; architecture boundaries are disabled.']];
-    $architecture = $data['architecture'] ?? null;
-    if (!is_array($architecture)) return [[], []];
+    if (!is_object($shape) || !is_array($data)) return [[], ['php-toolkit.json is malformed; architecture boundaries are disabled.']];
+    if (!array_key_exists('architecture', $data)) return [[], []];
+    if (!property_exists($shape, 'architecture')) return [[], ['architecture must be an object; architecture boundaries are disabled.']];
+    if (!is_object($shape->architecture)) return [[], ['architecture must be an object; architecture boundaries are disabled.']];
+    $architecture = $data['architecture'];
+    if (!is_array($architecture)) return [[], ['architecture must be an object; architecture boundaries are disabled.']];
     $layers = $architecture['layers'] ?? null;
     if (!is_array($layers) || $layers === []) return [[], ['architecture.layers must be a non-empty object; architecture boundaries are disabled.']];
     $byName = [];
@@ -81,7 +87,9 @@ function readConfig(string $root): array
             if (!is_string($exclude) || $exclude === '' || str_starts_with($exclude, '/') || preg_match('/^[A-Za-z]:/', $exclude) || preg_match('~(^|[\\\\/])\.\.([\\\\/]|$)~', $exclude)) {
                 return [[], ['architecture.exclude contains an unsafe path; architecture boundaries are disabled.']];
             }
-            $excludes[] = trim(str_replace('\\', '/', $exclude), '/');
+            $normalized = trim(str_replace('\\', '/', $exclude), '/');
+            $segments = array_values(array_filter(explode('/', $normalized), static fn(string $part): bool => $part !== '.'));
+            $excludes[] = implode('/', $segments);
         }
     }
     return [['layers' => $byName, 'exclude' => $excludes], []];
@@ -99,35 +107,56 @@ function isExcluded(string $relative, array $configured): bool
     return false;
 }
 
-function findPhpFiles(string $root, array $excludes, int $cap): array
+function pathWithinRoot(string $root, string $path): ?string
+{
+    $resolved = realpath($path);
+    if ($resolved === false) return null;
+    $prefix = rtrim($root, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+    return $resolved === $root || str_starts_with($resolved, $prefix) ? $resolved : null;
+}
+
+function findPhpFiles(string $root, array $excludes, int $cap, ?callable $beforeDirectoryOpen = null): array
 {
     $files = [];
     $pending = [$root];
     $visitedEntries = 0;
     $truncated = false;
+    $diagnostics = [];
     while ($pending !== []) {
         $directory = array_pop($pending);
+        if ($beforeDirectoryOpen !== null) $beforeDirectoryOpen($directory);
+        clearstatcache(true, $directory);
+        $resolvedDirectory = pathWithinRoot($root, $directory);
+        if ($resolvedDirectory === null || is_link($directory) || !is_dir($resolvedDirectory)) {
+            $diagnostics[] = 'A queued directory changed or could not be resolved within the selected root; scan is incomplete.';
+            continue;
+        }
         try {
-            $iterator = new DirectoryIterator($directory);
+            $iterator = new DirectoryIterator($resolvedDirectory);
         } catch (Throwable) {
+            $diagnostics[] = 'A directory could not be opened; scan is incomplete.';
             continue;
         }
         $entries = [];
-        foreach ($iterator as $entry) {
-            if ($entry->isDot()) continue;
-            $visitedEntries++;
-            if ($visitedEntries > MAX_DIRECTORY_ENTRIES) {
-                $truncated = true;
-                break;
+        try {
+            foreach ($iterator as $entry) {
+                if ($entry->isDot()) continue;
+                $visitedEntries++;
+                if ($visitedEntries > MAX_DIRECTORY_ENTRIES) {
+                    $truncated = true;
+                    break;
+                }
+                $entries[] = [
+                    'name' => $entry->getFilename(),
+                    'path' => $entry->getPathname(),
+                    'link' => $entry->isLink(),
+                    'directory' => $entry->isDir(),
+                    'file' => $entry->isFile(),
+                    'extension' => strtolower($entry->getExtension()),
+                ];
             }
-            $entries[] = [
-                'name' => $entry->getFilename(),
-                'path' => $entry->getPathname(),
-                'link' => $entry->isLink(),
-                'directory' => $entry->isDir(),
-                'file' => $entry->isFile(),
-                'extension' => strtolower($entry->getExtension()),
-            ];
+        } catch (Throwable) {
+            $diagnostics[] = 'A directory could not be fully read; scan is incomplete.';
         }
         usort($entries, static fn(array $a, array $b): int => strcmp($a['name'], $b['name']));
         $childDirectories = [];
@@ -138,6 +167,14 @@ function findPhpFiles(string $root, array $excludes, int $cap): array
             if ($entry['directory']) {
                 $childDirectories[] = $path;
             } elseif ($entry['file'] && $entry['extension'] === 'php') {
+                clearstatcache(true, $path);
+                $resolvedFile = pathWithinRoot($root, $path);
+                if ($resolvedFile === null || is_link($path) || !is_file($resolvedFile)) {
+                    $diagnostics[] = "A PHP file changed or could not be resolved within the selected root ({$relative}); scan is incomplete.";
+                    continue;
+                }
+                $relative = str_replace('\\', '/', substr($resolvedFile, strlen(rtrim($root, DIRECTORY_SEPARATOR)) + 1));
+                if (isExcluded($relative, $excludes)) continue;
                 $files[] = $relative;
                 if (count($files) > $cap) {
                     $truncated = true;
@@ -149,10 +186,21 @@ function findPhpFiles(string $root, array $excludes, int $cap): array
         if ($visitedEntries > MAX_DIRECTORY_ENTRIES) break;
     }
     sort($files, SORT_STRING);
-    return ['files' => array_slice($files, 0, $cap), 'truncated' => $truncated];
+    return ['files' => array_slice($files, 0, $cap), 'truncated' => $truncated, 'diagnostics' => $diagnostics];
 }
 
-function addImport(string $statement, int $line, array &$imports): void
+function addImportTarget(string $statement, int $line, string $namespace, array &$imports): void
+{
+    $pieces = preg_split('/\s+as\s+/i', trim($statement));
+    $target = trim($pieces[0] ?? '', " \t\r\n\\");
+    if ($target === '' || preg_match('/^(function|const)\s+/i', $target)) return;
+    $parts = explode('\\', $target);
+    $alias = trim($pieces[1] ?? (string) end($parts));
+    if ($alias === '') $alias = basename(str_replace('\\', '/', $target));
+    $imports[strtolower($namespace)][strtolower($alias)] = ['target' => $target, 'line' => $line, 'namespace' => $namespace];
+}
+
+function addImport(string $statement, int $line, string $namespace, array &$imports): void
 {
     $open = strpos($statement, '{');
     if ($open !== false) {
@@ -164,23 +212,13 @@ function addImport(string $statement, int $line, array &$imports): void
         foreach ($members as $member) {
             $pieces = preg_split('/\s+as\s+/i', trim($member));
             $name = trim($pieces[0] ?? '', " \t\r\n\\");
-            if ($name === '' || str_starts_with($name, 'function ') || str_starts_with($name, 'const ')) continue;
-            $target = $prefix . '\\' . $name;
-            $parts = explode('\\', $target);
-            $alias = trim($pieces[1] ?? (string) end($parts));
-            if ($alias === '') $alias = basename(str_replace('\\', '/', $target));
-            $imports[strtolower($alias)] = ['target' => $target, 'line' => $line];
+            if ($name === '' || preg_match('/^(function|const)\s+/i', $name)) continue;
+            addImportTarget($prefix . '\\' . $name . (isset($pieces[1]) ? ' as ' . $pieces[1] : ''), $line, $namespace, $imports);
         }
         return;
     }
 
-    $pieces = preg_split('/\s+as\s+/i', $statement);
-    $target = trim($pieces[0] ?? '', " \t\r\n\\");
-    if ($target === '' || str_starts_with($target, 'function ') || str_starts_with($target, 'const ')) return;
-    $parts = explode('\\', $target);
-    $alias = trim($pieces[1] ?? (string) end($parts));
-    if ($alias === '') $alias = basename(str_replace('\\', '/', $target));
-    $imports[strtolower($alias)] = ['target' => $target, 'line' => $line];
+    foreach (explode(',', $statement) as $target) addImportTarget($target, $line, $namespace, $imports);
 }
 
 function parseFile(string $source, string $relative, array $layers, array &$results): void
@@ -188,7 +226,8 @@ function parseFile(string $source, string $relative, array $layers, array &$resu
     $tokens = token_get_all($source);
     $namespace = '';
     $imports = [];
-    $classes = [];
+    $references = [];
+    $useEndIndex = -1;
     $activeClass = null;
     $pendingClass = null;
     $braceDepth = 0;
@@ -225,8 +264,16 @@ function parseFile(string $source, string $relative, array $layers, array &$resu
                 if ($part === ';') break;
                 $statement .= $part;
             }
+            $useEndIndex = $j;
             $statement = trim($statement);
-            addImport($statement, $tokenLine, $imports);
+            addImport($statement, $tokenLine, $namespace, $imports);
+        }
+
+        if ($i > $useEndIndex && in_array($id, [T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED, T_NAME_RELATIVE], true)) {
+            $previous = previousSignificant($tokens, $i - 1);
+            if ($previous < 0 || tokenId($tokens[$previous]) !== T_NAMESPACE) {
+                $references[] = ['name' => $text, 'namespace' => $namespace, 'line' => $tokenLine];
+            }
         }
 
         if (in_array($id, [T_CLASS, T_INTERFACE, T_TRAIT, T_ENUM], true)) {
@@ -313,23 +360,45 @@ function parseFile(string $source, string $relative, array $layers, array &$resu
         else $line += substr_count($text, "\n");
     }
 
-    $className = $classes[0]['name'] ?? null;
     if ($classCount > 0) {
         $results[] = metric($relative, null, "{$classCount} class-like declaration(s), {$methodCount} method(s), {$publicMethodCount} public method(s).");
     }
-    if ($namespace !== '') {
-        foreach ($imports as $alias => $import) {
-            $target = $import['target'];
-            $fromLayer = layerFor($namespace, $layers);
-            $toLayer = layerFor($target, $layers);
-            if ($fromLayer !== null && $toLayer !== null && $fromLayer !== $toLayer && !in_array($toLayer, $layers[$fromLayer]['depends'], true)) {
-                $results[] = [
-                    'kind' => 'finding', 'severity' => 'error', 'file' => $relative,
-                    'line' => $import['line'], 'message' => "{$fromLayer} may not depend on {$toLayer} ({$alias}).",
-                    'evidence' => $target, 'confidence' => 'high',
-                ];
-            }
+    foreach ($imports as $namespaceImports) {
+        foreach ($namespaceImports as $alias => $import) {
+            addBoundaryFinding($relative, $import['namespace'], $import['target'], $alias, $import['line'], $layers, $results);
         }
+    }
+    foreach ($references as $reference) {
+        $name = $reference['name'];
+        $namespaceName = $reference['namespace'];
+        $normalized = ltrim($name, '\\');
+        if (str_starts_with($name, '\\\\')) continue;
+        if (str_starts_with(strtolower($name), 'namespace\\')) {
+            $target = trim($namespaceName . '\\' . substr($name, strlen('namespace\\')), '\\');
+        } elseif (str_starts_with($name, '\\')) {
+            $target = $normalized;
+        } else {
+            $segments = explode('\\', $normalized);
+            $alias = strtolower($segments[0] ?? '');
+            $import = $imports[strtolower($namespaceName)][$alias] ?? null;
+            $target = $import
+                ? $import['target'] . (count($segments) > 1 ? '\\' . implode('\\', array_slice($segments, 1)) : '')
+                : trim($namespaceName . '\\' . $normalized, '\\');
+        }
+        addBoundaryFinding($relative, $namespaceName, $target, $name, $reference['line'], $layers, $results);
+    }
+}
+
+function addBoundaryFinding(string $file, string $namespace, string $target, string $alias, int $line, array $layers, array &$results): void
+{
+    $fromLayer = layerFor($namespace, $layers);
+    $toLayer = layerFor($target, $layers);
+    if ($fromLayer !== null && $toLayer !== null && $fromLayer !== $toLayer && !in_array($toLayer, $layers[$fromLayer]['depends'], true)) {
+        $results[] = [
+            'kind' => 'finding', 'severity' => 'error', 'file' => $file,
+            'line' => $line, 'message' => "{$fromLayer} may not depend on {$toLayer} ({$alias}).",
+            'evidence' => $target, 'confidence' => 'high',
+        ];
     }
 }
 
@@ -340,7 +409,8 @@ function layerFor(string $namespace, array $layers): ?string
     foreach ($layers as $name => $layer) {
         foreach ($layer['namespaces'] as $prefix) {
             $normalized = strtolower(rtrim($prefix, '\\'));
-            if (str_starts_with(strtolower($namespace), $normalized) && strlen($normalized) > $length) {
+            $candidate = strtolower($namespace);
+            if (($candidate === $normalized || str_starts_with($candidate, $normalized . '\\')) && strlen($normalized) > $length) {
                 $match = $name;
                 $length = strlen($normalized);
             }
@@ -359,6 +429,7 @@ function metric(string $file, ?int $line, string $message): array
     return ['kind' => 'metric', 'severity' => 'info', 'file' => $file, 'line' => $line, 'message' => $message];
 }
 
+if (realpath((string) ($_SERVER['SCRIPT_FILENAME'] ?? '')) === __FILE__) {
 $args = getopt('', ['directory:', 'format:', 'max-files:']);
 $root = isset($args['directory']) ? realpath((string) $args['directory']) : false;
 if ($root === false || !is_dir($root)) emit(['status' => 'error', 'diagnostics' => ['A valid --directory is required.'], 'results' => [], 'filesScanned' => 0, 'truncated' => false]);
@@ -369,10 +440,47 @@ $cap = min(500, $requested);
 $fileScan = findPhpFiles($root, $config['exclude'] ?? [], $cap);
 $files = $fileScan['files'];
 $truncated = $fileScan['truncated'];
+$diagnostics = array_merge($diagnostics, $fileScan['diagnostics']);
 $results = [];
+$filesScanned = 0;
+$fingerprints = [];
+$hashedBytes = 0;
 foreach ($files as $relative) {
-    $source = file_get_contents($root . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relative));
-    if (is_string($source)) parseFile($source, $relative, $config['layers'] ?? [], $results);
+    $path = $root . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relative);
+    clearstatcache(true, $path);
+    $resolvedFile = pathWithinRoot($root, $path);
+    if ($resolvedFile === null || is_link($path) || !is_file($resolvedFile)) {
+        $diagnostics[] = "A PHP file changed or could not be resolved within the selected root ({$relative}); scan is incomplete.";
+        continue;
+    }
+    $before = @stat($resolvedFile);
+    $source = @file_get_contents($resolvedFile);
+    clearstatcache(true, $path);
+    $resolvedAfterRead = pathWithinRoot($root, $path);
+    $after = $resolvedAfterRead !== null && !is_link($path) ? @stat($resolvedAfterRead) : false;
+    if (!is_array($before) || !is_array($after) || $resolvedAfterRead === null || $before['dev'] !== $after['dev'] || $before['ino'] !== $after['ino']) {
+        $diagnostics[] = "A PHP file changed or escaped the selected root while being read ({$relative}); scan is incomplete.";
+        continue;
+    }
+    if (is_string($source)) {
+        parseFile($source, $relative, $config['layers'] ?? [], $results);
+        $filesScanned++;
+        if ($before['size'] !== $after['size'] || $before['mtime'] !== $after['mtime']) {
+            $diagnostics[] = "A PHP file changed while being read ({$relative}); scan is incomplete.";
+        }
+        $size = is_array($before) ? (int) $before['size'] : strlen($source);
+        $mtime = (int) $after['mtime'];
+        if ($size <= CONTENT_HASH_LIMIT && $hashedBytes + $size <= CONTENT_HASH_BUDGET) {
+            $fingerprints[$relative] = 'content:' . hash('sha256', $source);
+            $hashedBytes += $size;
+        } else {
+            $fingerprints[$relative] = "metadata:{$after['dev']}:{$after['ino']}:{$after['size']}:{$mtime}";
+        }
+    } else {
+        $diagnostics[] = "A PHP file could not be read ({$relative}); scan is incomplete.";
+    }
 }
 usort($results, static fn(array $a, array $b): int => [$a['file'] ?? '', $a['line'] ?? 0, $a['kind'], $a['message']] <=> [$b['file'] ?? '', $b['line'] ?? 0, $b['kind'], $b['message']]);
-emit(['status' => 'ok', 'scannerVersion' => SCANNER_VERSION, 'filesScanned' => count($files), 'truncated' => $truncated, 'diagnostics' => $diagnostics, 'results' => $results]);
+$incomplete = $diagnostics !== [] || $filesScanned < count($files);
+emit(['status' => $incomplete ? 'error' : 'ok', 'scannerVersion' => SCANNER_VERSION, 'filesScanned' => $filesScanned, 'truncated' => $truncated, 'diagnostics' => $diagnostics, 'fingerprints' => $fingerprints, 'results' => $results]);
+}

@@ -16,7 +16,9 @@ export async function composerScriptCheck(env, check, scriptName) {
         return unavailable(check, "not-configured", "Composer manifest is not available");
     }
     const result = await env.runner.run("composer", ["run-script", "--no-interaction", scriptName], env.root, SCRIPT_TIMEOUT_MS, env.signal);
-    const failure = runFailure(check, result, "Composer is not installed");
+    // Only a spawn-level ENOENT identifies a missing Composer binary. A project
+    // script may itself print "command not found" to stderr.
+    const failure = runFailure(check, result.code === "ENOENT" ? result : { ...result, stderr: "" }, "Composer is not installed");
     if (failure)
         return failure;
     const detail = boundedOutput(result.stdout, result.stderr);

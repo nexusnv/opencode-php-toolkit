@@ -176,8 +176,10 @@ Deptrac installation continues to run as well.
 
 The cache includes the project root, PHP file fingerprints, architecture
 configuration, Composer lock fingerprint, scanner version, and toolkit version.
-Files up to 1 MiB are content-hashed. Larger files use path/size/mtime metadata
-and the report labels this best-effort mode as `metadata`.
+Files up to 1 MiB each are content-hashed while the aggregate content-hash
+budget remains within 16 MiB. Once that budget is exhausted, remaining files use
+path/size/mtime metadata even when each file is below 1 MiB. Larger files also
+use metadata, and the report labels this best-effort mode as `metadata`.
 
 Set `architectureScan: "auto"` to enable an optional scan summary for tasks
 classified as both Design and Architecture. Auto mode scans at most 100 files

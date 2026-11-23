@@ -127,4 +127,13 @@ describe("detectPhpProject", () => {
     expect(formatDetection(info)).not.toContain("vendor/bin/phpstan analyse");
     expect(formatDetection(info)).not.toContain("run: echo");
   });
+
+  it("detects block PHP matrices without treating Composer dependency versions as PHP", async () => {
+    const dir = workspace({
+      "composer.json": manifest({ require: { php: ">=8.1", "vendor/library": "^9.4" } }),
+      ".github/workflows/ci.yml": "strategy:\n  matrix:\n    php:\n      - '8.2'\n      - '8.3'\n    dependencies:\n      - '9.4'\nsteps:\n  - run: composer require phpunit/phpunit:^10.4\n",
+    });
+    const info = await detectPhpProject(dir);
+    expect(info.ci.phpVersions).toEqual(["8.2", "8.3"]);
+  });
 });

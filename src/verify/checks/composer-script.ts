@@ -30,7 +30,13 @@ export async function composerScriptCheck(
     SCRIPT_TIMEOUT_MS,
     env.signal,
   );
-  const failure = runFailure(check, result, "Composer is not installed");
+  // Only a spawn-level ENOENT identifies a missing Composer binary. A project
+  // script may itself print "command not found" to stderr.
+  const failure = runFailure(
+    check,
+    result.code === "ENOENT" ? result : { ...result, stderr: "" },
+    "Composer is not installed",
+  );
   if (failure) return failure;
 
   const detail = boundedOutput(result.stdout, result.stderr);

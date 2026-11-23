@@ -4,8 +4,18 @@ import { createArchitectureCacheKey, readArchitectureCache, writeArchitectureCac
 const OUTPUT_LIMIT = 1024 * 1024;
 const TIMEOUT_MS = 20_000;
 const SCRIPT_PATH = fileURLToPath(new URL("../../scripts/architecture-scan.php", import.meta.url));
-function failure(status, message) {
-    return { status, cacheHit: false, cacheMode: null, filesScanned: 0, truncated: false, results: [], diagnostics: [], error: message };
+function failure(status, message, permissionFailure) {
+    return {
+        status,
+        cacheHit: false,
+        cacheMode: null,
+        filesScanned: 0,
+        truncated: false,
+        results: [],
+        diagnostics: [],
+        error: message,
+        ...(permissionFailure ? { permissionFailure } : {}),
+    };
 }
 function parsePayload(raw) {
     let value;
@@ -18,7 +28,7 @@ function parsePayload(raw) {
     if (!value || typeof value !== "object")
         return null;
     const payload = value;
-    if (payload.status !== "ok" || !Array.isArray(payload.results) || !Array.isArray(payload.diagnostics) ||
+    if (!(payload.status === "ok" || payload.status === "error") || !Array.isArray(payload.results) || !Array.isArray(payload.diagnostics) ||
         typeof payload.filesScanned !== "number" || typeof payload.truncated !== "boolean")
         return null;
     const results = [];
@@ -43,12 +53,19 @@ function parsePayload(raw) {
     }
     if (!payload.diagnostics.every((item) => typeof item === "string"))
         return null;
+    if (payload.fingerprints !== undefined && (!payload.fingerprints || typeof payload.fingerprints !== "object" ||
+        Array.isArray(payload.fingerprints) || !Object.values(payload.fingerprints).every((item) => typeof item === "string")))
+        return null;
     return {
-        status: "ok",
+        status: payload.status,
         filesScanned: Math.max(0, Math.floor(payload.filesScanned)),
         truncated: payload.truncated,
         diagnostics: payload.diagnostics.map((item) => item.slice(0, 1000)).slice(0, 100),
         results: results.slice(0, 10_000),
+        ...(payload.fingerprints ? { fingerprints: payload.fingerprints } : {}),
+        ...(payload.status === "error"
+            ? { error: (payload.diagnostics.join("\n") || "PHP architecture scan was incomplete.").slice(0, 2000) }
+            : {}),
     };
 }
 /** Runs the packaged token scanner through the caller's permission-aware runner. */
@@ -79,7 +96,7 @@ export async function scanArchitecture(root, profile, options = {}) {
     if (run.killed)
         return failure("timed-out", `Architecture scanner exceeded its ${Math.ceil(timeoutMs / 1000)} second limit.`);
     if (run.code === PERMISSION_DENIED_CODE || run.code === PERMISSION_APPROVAL_CODE) {
-        return failure("unavailable", run.stderr || "PHP execution was blocked by command permissions.");
+        return failure("unavailable", run.stderr || "PHP execution was blocked by command permissions.", run.code === PERMISSION_DENIED_CODE ? "denied" : "approval-required");
     }
     if (isMissingBinary(run))
         return failure("unavailable", "PHP CLI was not found on PATH.");
@@ -90,9 +107,19 @@ export async function scanArchitecture(root, profile, options = {}) {
     const payload = parsePayload(run.stdout);
     if (!payload)
         return failure("error", "PHP architecture scanner returned invalid JSON or an unsupported result shape.");
-    const result = { ...payload, cacheHit: false, cacheMode: identity.mode };
-    if (!identity.truncated)
-        await writeArchitectureCache(identity.key, payload, options.storage);
+    const { fingerprints, ...scanPayload } = payload;
+    const result = { ...scanPayload, cacheHit: false, cacheMode: identity.mode };
+    if (payload.status !== "ok")
+        return result;
+    const expectedPaths = Object.keys(identity.fingerprints).sort();
+    const actualPaths = Object.keys(fingerprints ?? {}).sort();
+    const fingerprintsMatch = fingerprints !== undefined &&
+        payload.filesScanned === expectedPaths.length &&
+        expectedPaths.length === actualPaths.length &&
+        expectedPaths.every((path, index) => path === actualPaths[index] && identity.fingerprints[path] === fingerprints[path]);
+    if (!identity.truncated && fingerprintsMatch) {
+        await writeArchitectureCache(identity.key, scanPayload, options.storage);
+    }
     return result;
 }
 //# sourceMappingURL=scanner.js.map
