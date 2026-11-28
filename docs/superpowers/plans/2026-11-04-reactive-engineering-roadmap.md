@@ -56,7 +56,7 @@ Current plans:
 | Phase 2 — Pattern Library and Architecture Behavior | Created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-2-pattern-library.md` |
 | Phase 3 — Verification | Created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-3-verification.md` |
 | Phase 4 — Architect Surface and Diagnostics | Created | `docs/superpowers/plans/2026-11-23-php-architect-workflows.md` |
-| Phase 5 — Architecture Scanner | Not created | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-5-scanner.md` |
+| Phase 5 — Architecture Scanner | Created | `docs/superpowers/plans/2026-11-23-php-architecture-scanner.md` |
 | Phase 6 — Drift Detection and Feedback | Deferred | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-6-drift.md` |
 | Phase 7 — Advanced Routing | Deferred | `docs/superpowers/plans/2026-11-04-reactive-engineering-phase-7-advanced-routing.md` |
 
