@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Scanner status counts and last-run status in `/php-toolkit-status` and local metrics.
 - Explicit `php_verify` mappings for existing Composer test, static-analysis and style scripts, plus safe CI convention summaries.
 
+### Fixed
+
+- Architecture imports are scoped to each namespace declaration, and `function`/`const` modifiers apply to every comma-separated import.
+- Architecture scans use the validated boundary snapshot bound to the cache key; truncated and metadata-mode scans are never cached.
+- Cache discovery honors configured architecture excludes and bounded YAML matrices accept sequence entries at the key indentation.
+- Incomplete-scan summaries remain visible when a boundary violation is reported.
+
 ## [0.4.0] - 2026-11-09
 
 ### Added

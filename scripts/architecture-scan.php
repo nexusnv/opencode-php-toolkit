@@ -3,10 +3,12 @@ declare(strict_types=1);
 
 /** Dependency-free, read-only PHP structure scanner. */
 
-const SCANNER_VERSION = '4';
+const SCANNER_VERSION = '5';
 const MAX_DIRECTORY_ENTRIES = 20000;
 const CONTENT_HASH_LIMIT = 1048576;
 const CONTENT_HASH_BUDGET = 16777216;
+const MAX_SOURCE_BYTES = 4194304;
+const MAX_TOTAL_SOURCE_BYTES = 67108864;
 
 function emit(array $payload): never
 {
@@ -40,13 +42,10 @@ function previousSignificant(array $tokens, int $index): int
     return $index;
 }
 
-function readConfig(string $root): array
+function decodeArchitectureConfig(string $raw): array
 {
-    $path = $root . DIRECTORY_SEPARATOR . 'php-toolkit.json';
-    if (!is_file($path)) return [[], []];
-    $raw = file_get_contents($path);
-    $shape = is_string($raw) ? json_decode($raw) : null;
-    $data = is_string($raw) ? json_decode($raw, true) : null;
+    $shape = json_decode($raw);
+    $data = json_decode($raw, true);
     if (!is_object($shape) || !is_array($data)) return [[], ['php-toolkit.json is malformed; architecture boundaries are disabled.']];
     if (!array_key_exists('architecture', $data)) return [[], []];
     if (!property_exists($shape, 'architecture')) return [[], ['architecture must be an object; architecture boundaries are disabled.']];
@@ -93,6 +92,14 @@ function readConfig(string $root): array
         }
     }
     return [['layers' => $byName, 'exclude' => $excludes], []];
+}
+
+function readConfig(string $root): array
+{
+    $path = $root . DIRECTORY_SEPARATOR . 'php-toolkit.json';
+    if (!is_file($path)) return [[], []];
+    $raw = file_get_contents($path);
+    return decodeArchitectureConfig(is_string($raw) ? $raw : '');
 }
 
 function isExcluded(string $relative, array $configured): bool
@@ -189,7 +196,7 @@ function findPhpFiles(string $root, array $excludes, int $cap, ?callable $before
     return ['files' => array_slice($files, 0, $cap), 'truncated' => $truncated, 'diagnostics' => $diagnostics];
 }
 
-function addImportTarget(string $statement, int $line, string $namespace, array &$imports): void
+function addImportTarget(string $statement, int $line, string $namespace, int $scope, array &$imports): void
 {
     $pieces = preg_split('/\s+as\s+/i', trim($statement));
     $target = trim($pieces[0] ?? '', " \t\r\n\\");
@@ -197,10 +204,10 @@ function addImportTarget(string $statement, int $line, string $namespace, array 
     $parts = explode('\\', $target);
     $alias = trim($pieces[1] ?? (string) end($parts));
     if ($alias === '') $alias = basename(str_replace('\\', '/', $target));
-    $imports[strtolower($namespace)][strtolower($alias)] = ['target' => $target, 'line' => $line, 'namespace' => $namespace];
+    $imports[$scope][strtolower($alias)] = ['target' => $target, 'line' => $line, 'namespace' => $namespace];
 }
 
-function addImport(string $statement, int $line, string $namespace, array &$imports): void
+function addImport(string $statement, int $line, string $namespace, int $scope, array &$imports): void
 {
     $open = strpos($statement, '{');
     if ($open !== false) {
@@ -213,18 +220,29 @@ function addImport(string $statement, int $line, string $namespace, array &$impo
             $pieces = preg_split('/\s+as\s+/i', trim($member));
             $name = trim($pieces[0] ?? '', " \t\r\n\\");
             if ($name === '' || preg_match('/^(function|const)\s+/i', $name)) continue;
-            addImportTarget($prefix . '\\' . $name . (isset($pieces[1]) ? ' as ' . $pieces[1] : ''), $line, $namespace, $imports);
+            addImportTarget($prefix . '\\' . $name . (isset($pieces[1]) ? ' as ' . $pieces[1] : ''), $line, $namespace, $scope, $imports);
         }
         return;
     }
 
-    foreach (explode(',', $statement) as $target) addImportTarget($target, $line, $namespace, $imports);
+    // PHP applies a function/const modifier to every comma-separated member.
+    $modifier = '';
+    foreach (explode(',', $statement) as $target) {
+        $target = trim($target);
+        if (preg_match('/^(function|const)\s+/i', $target, $match)) {
+            $modifier = strtolower($match[1]);
+            $target = trim(substr($target, strlen($match[0])));
+        }
+        if ($modifier !== '') continue;
+        addImportTarget($target, $line, $namespace, $scope, $imports);
+    }
 }
 
 function parseFile(string $source, string $relative, array $layers, array &$results): void
 {
     $tokens = token_get_all($source);
     $namespace = '';
+    $scope = 0;
     $imports = [];
     $references = [];
     $useEndIndex = -1;
@@ -255,6 +273,9 @@ function parseFile(string $source, string $relative, array $layers, array &$resu
                 $name .= $part;
             }
             $namespace = trim($name, " \t\r\n\\");
+            // PHP resets imports at every namespace declaration, including
+            // repeated bracketed blocks that declare the same namespace.
+            $scope++;
         }
 
         if ($id === T_USE && $activeClass === null && $braceDepth <= 1) {
@@ -266,13 +287,13 @@ function parseFile(string $source, string $relative, array $layers, array &$resu
             }
             $useEndIndex = $j;
             $statement = trim($statement);
-            addImport($statement, $tokenLine, $namespace, $imports);
+            addImport($statement, $tokenLine, $namespace, $scope, $imports);
         }
 
         if ($i > $useEndIndex && in_array($id, [T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED, T_NAME_RELATIVE], true)) {
             $previous = previousSignificant($tokens, $i - 1);
             if ($previous < 0 || tokenId($tokens[$previous]) !== T_NAMESPACE) {
-                $references[] = ['name' => $text, 'namespace' => $namespace, 'line' => $tokenLine];
+                $references[] = ['name' => $text, 'namespace' => $namespace, 'scope' => $scope, 'line' => $tokenLine];
             }
         }
 
@@ -380,7 +401,7 @@ function parseFile(string $source, string $relative, array $layers, array &$resu
         } else {
             $segments = explode('\\', $normalized);
             $alias = strtolower($segments[0] ?? '');
-            $import = $imports[strtolower($namespaceName)][$alias] ?? null;
+            $import = $imports[$reference['scope']][$alias] ?? null;
             $target = $import
                 ? $import['target'] . (count($segments) > 1 ? '\\' . implode('\\', array_slice($segments, 1)) : '')
                 : trim($namespaceName . '\\' . $normalized, '\\');
@@ -430,13 +451,17 @@ function metric(string $file, ?int $line, string $message): array
 }
 
 if (realpath((string) ($_SERVER['SCRIPT_FILENAME'] ?? '')) === __FILE__) {
-$args = getopt('', ['directory:', 'format:', 'max-files:']);
+$args = getopt('', ['directory:', 'format:', 'max-files:', 'config:']);
 $root = isset($args['directory']) ? realpath((string) $args['directory']) : false;
 if ($root === false || !is_dir($root)) emit(['status' => 'error', 'diagnostics' => ['A valid --directory is required.'], 'results' => [], 'filesScanned' => 0, 'truncated' => false]);
 if (($args['format'] ?? 'json') !== 'json') emit(['status' => 'error', 'diagnostics' => ['Only --format json is supported.'], 'results' => [], 'filesScanned' => 0, 'truncated' => false]);
 $requested = isset($args['max-files']) ? max(1, (int) $args['max-files']) : 500;
 $cap = min(500, $requested);
-[$config, $diagnostics] = readConfig($root);
+// When the caller supplies a validated policy snapshot, use it instead of
+// re-reading php-toolkit.json so cache identity and scan rules cannot diverge.
+[$config, $diagnostics] = isset($args['config'])
+    ? decodeArchitectureConfig((string) $args['config'])
+    : readConfig($root);
 $fileScan = findPhpFiles($root, $config['exclude'] ?? [], $cap);
 $files = $fileScan['files'];
 $truncated = $fileScan['truncated'];
@@ -445,6 +470,7 @@ $results = [];
 $filesScanned = 0;
 $fingerprints = [];
 $hashedBytes = 0;
+$scannedBytes = 0;
 foreach ($files as $relative) {
     $path = $root . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relative);
     clearstatcache(true, $path);
@@ -454,6 +480,11 @@ foreach ($files as $relative) {
         continue;
     }
     $before = @stat($resolvedFile);
+    $fileSize = is_array($before) ? (int) $before['size'] : 0;
+    if ($fileSize > MAX_SOURCE_BYTES || $scannedBytes + $fileSize > MAX_TOTAL_SOURCE_BYTES) {
+        $diagnostics[] = "A PHP file exceeded the source-byte limit ({$relative}); scan is incomplete.";
+        continue;
+    }
     $source = @file_get_contents($resolvedFile);
     clearstatcache(true, $path);
     $resolvedAfterRead = pathWithinRoot($root, $path);
@@ -465,6 +496,7 @@ foreach ($files as $relative) {
     if (is_string($source)) {
         parseFile($source, $relative, $config['layers'] ?? [], $results);
         $filesScanned++;
+        $scannedBytes += strlen($source);
         if ($before['size'] !== $after['size'] || $before['mtime'] !== $after['mtime']) {
             $diagnostics[] = "A PHP file changed while being read ({$relative}); scan is incomplete.";
         }
@@ -482,5 +514,5 @@ foreach ($files as $relative) {
 }
 usort($results, static fn(array $a, array $b): int => [$a['file'] ?? '', $a['line'] ?? 0, $a['kind'], $a['message']] <=> [$b['file'] ?? '', $b['line'] ?? 0, $b['kind'], $b['message']]);
 $incomplete = $diagnostics !== [] || $filesScanned < count($files);
-emit(['status' => $incomplete ? 'error' : 'ok', 'scannerVersion' => SCANNER_VERSION, 'filesScanned' => $filesScanned, 'truncated' => $truncated, 'diagnostics' => $diagnostics, 'fingerprints' => $fingerprints, 'results' => $results]);
+emit(['status' => $incomplete ? 'error' : 'ok', 'scannerVersion' => SCANNER_VERSION, 'filesScanned' => $filesScanned, 'truncated' => $truncated, 'diagnostics' => $diagnostics, 'fingerprints' => (object) $fingerprints, 'results' => $results]);
 }

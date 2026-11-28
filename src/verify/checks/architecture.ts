@@ -114,7 +114,13 @@ export async function architectureCheck(env: CheckEnvironment): Promise<CheckRes
 
   const failedResults = results.filter((item) => item.status === "failed");
   if (failedResults.length) {
-    return failed("architecture", failedResults.map((item) => item.summary).join("; "), failedResults.reduce((sum, item) => sum + item.findings, 0), failedResults.map((item) => item.detail).filter(Boolean).join("\n"));
+    // Keep incomplete-scan information visible even when a violation is present.
+    const summary = results.map((item) => item.summary).join("; ");
+    const detail = results
+      .map((item) => item.detail ?? (item.status === "failed" ? null : item.summary))
+      .filter(Boolean)
+      .join("\n");
+    return failed("architecture", summary, failedResults.reduce((sum, item) => sum + item.findings, 0), detail || null);
   }
   const operational = results.find((item) => ["unavailable", "cancelled", "timed_out"].includes(item.status));
   if (operational) return { ...operational, check: "architecture" };

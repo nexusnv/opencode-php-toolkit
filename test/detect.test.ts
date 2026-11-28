@@ -128,6 +128,14 @@ describe("detectPhpProject", () => {
     expect(formatDetection(info)).not.toContain("run: echo");
   });
 
+  it("reads block matrices whose sequence entries share the php key indentation", async () => {
+    const dir = workspace({
+      ".github/workflows/ci.yml": "strategy:\n  matrix:\n    php:\n    - '8.2'\n    - '8.3'\n  run: echo ok\n",
+    });
+    const info = await detectPhpProject(dir);
+    expect(info.ci.phpVersions).toEqual(["8.2", "8.3"]);
+  });
+
   it("detects block PHP matrices without treating Composer dependency versions as PHP", async () => {
     const dir = workspace({
       "composer.json": manifest({ require: { php: ">=8.1", "vendor/library": "^9.4" } }),

@@ -10,8 +10,9 @@ const root = process.cwd();
 const script = join(root, "scripts/architecture-scan.php");
 const fixture = join(root, "fixtures/php-architecture");
 
-async function scan(directory: string, maxFiles?: number) {
+async function scan(directory: string, maxFiles?: number, config?: unknown) {
   const args = [script, "--directory", directory, "--format", "json"];
+  if (config !== undefined) args.push("--config", JSON.stringify(config));
   if (maxFiles !== undefined) args.push("--max-files", String(maxFiles));
   const stdout = execFileSync("php", args, { encoding: "utf8", timeout: 5000 });
   return JSON.parse(stdout) as {
@@ -100,18 +101,21 @@ describe("architecture scanner CLI", () => {
       const harness = join(directory, "race-harness");
       await writeFile(harness, `<?php
 require $argv[1];
-$root = $argv[2];
+$root = realpath($argv[2]);
 $outside = $argv[3];
-$result = findPhpFiles($root, [], 100, static function (string $queued) use ($root, $outside): void {
+$replaced = false;
+$result = findPhpFiles($root, [], 100, static function (string $queued) use ($root, $outside, &$replaced): void {
     if ($queued === $root . DIRECTORY_SEPARATOR . 'src') {
         rename($queued, $root . DIRECTORY_SEPARATOR . 'src-original');
         symlink($outside, $queued);
+        $replaced = true;
     }
 });
-echo json_encode($result, JSON_UNESCAPED_SLASHES), "\\n";
+echo json_encode($result + ['replaced' => $replaced], JSON_UNESCAPED_SLASHES), "\\n";
 `);
       const stdout = execFileSync("php", [harness, script, directory, outside], { encoding: "utf8", timeout: 5000 });
-      const result = JSON.parse(stdout) as { files: string[]; diagnostics: string[] };
+      const result = JSON.parse(stdout) as { files: string[]; diagnostics: string[]; replaced: boolean };
+      expect(result.replaced).toBe(true);
       expect(result.files).toEqual([]);
       expect(result.diagnostics.join(" ")).toContain("selected root");
     } finally {
@@ -228,7 +232,93 @@ echo json_encode($result, JSON_UNESCAPED_SLASHES), "\\n";
         Domain: { namespaces: ["App\\Domain\\"], mayDependOn: [] },
       }, exclude: ["./src/Excluded"] } }));
       const result = await scan(directory);
+      expect(result.status).toBe("ok");
+      expect(Object.keys(result.fingerprints).sort()).toEqual([
+        "src/Domain/OrderService.php",
+        "src/Infrastructure/Database.php",
+      ]);
       expect(result.results.every((item) => !item.file?.includes("Excluded"))).toBe(true);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps imports scoped to each namespace declaration", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "php-architecture-scopes-"));
+    try {
+      await writeFile(join(directory, "php-toolkit.json"), JSON.stringify({ architecture: { layers: {
+        Domain: { namespaces: ["App\\Domain\\"], mayDependOn: [] },
+        Infrastructure: { namespaces: ["App\\Infrastructure\\"], mayDependOn: [] },
+      } } }));
+      await writeFile(join(directory, "Scoped.php"), `<?php
+namespace App\\Domain { use App\\Infrastructure\\Db as Lib; class First extends Lib {} }
+namespace App\\Domain { use App\\Domain\\Support as Lib; class Second extends Lib {} }
+`);
+      const result = await scan(directory);
+      const findings = result.results.filter((item) => item.kind === "finding");
+      expect(findings.some((item) => item.evidence?.includes("App\\Infrastructure\\Db"))).toBe(true);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("applies a function modifier to every comma-separated import", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "php-architecture-functions-"));
+    try {
+      await writeFile(join(directory, "php-toolkit.json"), JSON.stringify({ architecture: { layers: {
+        Domain: { namespaces: ["App\\Domain\\"], mayDependOn: [] },
+        Infrastructure: { namespaces: ["App\\Infrastructure\\"], mayDependOn: [] },
+      } } }));
+      await writeFile(join(directory, "Functions.php"), `<?php\nnamespace App\\Domain;\nuse function App\\Infrastructure\\ping, App\\Infrastructure\\pong;\nclass Probe {}\n`);
+      const result = await scan(directory);
+      expect(result.status).toBe("ok");
+      expect(result.results.some((item) => item.kind === "finding")).toBe(false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reports an incomplete scan when a source file exceeds the byte limit", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "php-architecture-bytes-"));
+    try {
+      await writeFile(join(directory, "Huge.php"), `<?php class Huge {} ${"x".repeat(4 * 1024 * 1024)}`);
+      const result = await scan(directory);
+      expect(result.status).toBe("error");
+      expect(result.diagnostics.join(" ")).toContain("source-byte limit");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("encodes an empty fingerprint map as a JSON object", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "php-architecture-empty-"));
+    try {
+      const result = await scan(directory);
+      expect(result.status).toBe("ok");
+      expect(result.filesScanned).toBe(0);
+      expect(result.fingerprints).toEqual({});
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the caller's validated policy snapshot instead of re-reading config", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "php-architecture-policy-"));
+    try {
+      await writeFile(join(directory, "php-toolkit.json"), JSON.stringify({ architecture: { layers: {
+        Domain: { namespaces: ["App\\Domain\\"], mayDependOn: ["Infrastructure"] },
+        Infrastructure: { namespaces: ["App\\Infrastructure\\"], mayDependOn: [] },
+      } } }));
+      await writeFile(join(directory, "Allowed.php"), `<?php\nnamespace App\\Domain;\nuse App\\Infrastructure\\Db;\nclass Order {}\n`);
+      const loose = await scan(directory);
+      expect(loose.results.some((item) => item.kind === "finding")).toBe(false);
+
+      const strict = await scan(directory, undefined, { architecture: { layers: {
+        Domain: { namespaces: ["App\\Domain\\"], mayDependOn: [] },
+        Infrastructure: { namespaces: ["App\\Infrastructure\\"], mayDependOn: [] },
+      }, exclude: [] } });
+      expect(strict.status).toBe("ok");
+      expect(strict.results.some((item) => item.kind === "finding")).toBe(true);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

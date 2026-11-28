@@ -360,6 +360,35 @@ describe("architectureCheck", () => {
     expect(result.detail).toContain("hypothesis: ");
   });
 
+  it("keeps incomplete-scan information when reporting violations", async () => {
+    const root = project(["src/A.php"]);
+    const base = env(root);
+    const scanJson = JSON.stringify({
+      status: "ok",
+      scannerVersion: "5",
+      filesScanned: 1,
+      truncated: true,
+      diagnostics: [],
+      results: [
+        { kind: "finding", severity: "error", file: "src/A.php", line: 3, message: "Domain may not depend on Infrastructure" },
+      ],
+    });
+    const result = await architectureCheck(env(root, {
+      profile: {
+        ...base.profile,
+        fingerprint: "profile-truncated",
+        lockFingerprint: null,
+        subpath: null,
+        toolkitConfig: { config: { architecture: { layers: { Domain: { namespaces: ["App\\Domain\\"], mayDependOn: [] } }, exclude: [] }, routing: { disableSkills: [], extraSkills: [] }, verification: null }, diagnostics: [], present: true },
+        configFiles: { ...base.profile.configFiles, architecture: "php-toolkit.json" },
+      } as unknown as ProjectProfile,
+      runner: runner(() => ({ stdout: scanJson })),
+    }));
+    expect(result).toMatchObject({ status: "failed", findings: 1 });
+    expect(result.summary).toContain("incomplete");
+    expect(result.detail).toContain("incomplete");
+  });
+
   it("does not pass when the configured scanner fails", async () => {
     const root = project(["src/A.php"]);
     const base = env(root);

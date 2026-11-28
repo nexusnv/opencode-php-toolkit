@@ -12,7 +12,7 @@ export interface ArchitectureCacheIdentity {
     timedOut: boolean;
     fingerprints: Record<string, string>;
 }
-export declare const ARCHITECTURE_SCANNER_VERSION = "4";
+export declare const ARCHITECTURE_SCANNER_VERSION = "5";
 /** Content fingerprints are exact up to 1 MiB per file and a 16 MiB aggregate budget.
  * Remaining files use metadata mode.
  */

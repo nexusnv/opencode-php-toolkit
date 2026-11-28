@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { buildProjectProfile } from "../src/profile.js";
 import type { CommandRunner, RunResult } from "../src/tools/runner.js";
 import { scanArchitecture } from "../src/architecture/scanner.js";
+import { createArchitectureCacheKey } from "../src/architecture/cache.js";
 
 function result(stdout: string, overrides: Partial<RunResult> = {}): RunResult {
   return { ok: true, stdout, stderr: "", code: 0, killed: false, aborted: false, ...overrides };
@@ -107,6 +108,67 @@ describe("scanArchitecture", () => {
       expect(aborted.status).toBe("cancelled");
       const timeout = await scanArchitecture(root, profile, { runner: { run: async () => result("", { ok: false, killed: true }) } });
       expect(timeout.status).toBe("timed-out");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("passes the validated boundary snapshot to PHP", async () => {
+    const root = await mkdtemp(join(tmpdir(), "architecture-scan-policy-"));
+    try {
+      await writeFile(join(root, "php-toolkit.json"), JSON.stringify({
+        architecture: { layers: { Domain: { namespaces: ["App\\Domain\\"], mayDependOn: [] } }, exclude: [] },
+      }));
+      const profile = await buildProjectProfile(root, null);
+      let args: readonly string[] = [];
+      const scan = await scanArchitecture(root, profile, {
+        runner: { run: async (_cmd, cmdArgs) => { args = cmdArgs; return result(payload); } },
+      });
+      expect(scan.status).toBe("ok");
+      expect(args).toContain("--config");
+      expect(args[args.indexOf("--config") + 1]).toContain("Domain");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not cache truncated or metadata-only scans", async () => {
+    const root = await mkdtemp(join(tmpdir(), "architecture-scan-cache-safety-"));
+    try {
+      await writeFile(join(root, "Example.php"), source);
+      const profile = await buildProjectProfile(root, null);
+      const identity = await createArchitectureCacheKey(root, profile);
+      const persisted = new Map<string, unknown>();
+      const storage = {
+        get: async (key: string) => persisted.get(key),
+        set: async (key: string, value: unknown) => { persisted.set(key, value); },
+      };
+
+      const truncatedPayload = JSON.stringify({
+        status: "ok", scannerVersion: "5", filesScanned: 1, truncated: true, diagnostics: [],
+        fingerprints: identity.fingerprints, results: [],
+      });
+      const truncated = await scanArchitecture(root, profile, {
+        storage,
+        runner: { run: async () => result(truncatedPayload) },
+      });
+      expect(truncated.status).toBe("ok");
+      expect(persisted.size).toBe(0);
+
+      await writeFile(join(root, "Large.php"), "x".repeat(1024 * 1024 + 1));
+      const largeProfile = await buildProjectProfile(root, null);
+      const largeIdentity = await createArchitectureCacheKey(root, largeProfile);
+      expect(largeIdentity.mode).toBe("metadata");
+      const metadataPayload = JSON.stringify({
+        status: "ok", scannerVersion: "5", filesScanned: 2, truncated: false, diagnostics: [],
+        fingerprints: largeIdentity.fingerprints, results: [],
+      });
+      const metadata = await scanArchitecture(root, largeProfile, {
+        storage,
+        runner: { run: async () => result(metadataPayload) },
+      });
+      expect(metadata.status).toBe("ok");
+      expect(persisted.size).toBe(0);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

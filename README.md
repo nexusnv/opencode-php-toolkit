@@ -180,6 +180,11 @@ Files up to 1 MiB each are content-hashed while the aggregate content-hash
 budget remains within 16 MiB. Once that budget is exhausted, remaining files use
 path/size/mtime metadata even when each file is below 1 MiB. Larger files also
 use metadata, and the report labels this best-effort mode as `metadata`.
+The scanner receives the same validated boundary configuration that is bound
+into the cache key, so a config change during a scan cannot poison a later
+cache hit. Truncated and metadata-mode scans are not cached. Source reads are
+bounded at 4 MiB per file and 64 MiB per scan; an oversized file yields an
+incomplete scan, never a clean pass.
 
 Set `architectureScan: "auto"` to enable an optional scan summary for tasks
 classified as both Design and Architecture. Auto mode scans at most 100 files

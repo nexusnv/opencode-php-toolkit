@@ -72,6 +72,26 @@ describe("architecture cache key", () => {
     }
   });
 
+  it("applies configured excludes before counting files against the cap", async () => {
+    const root = await mkdtemp(join(tmpdir(), "architecture-cache-excludes-"));
+    try {
+      await mkdir(join(root, "src", "Excluded"), { recursive: true });
+      await writeFile(join(root, "src", "Local.php"), "<?php class Local {}\n");
+      await writeFile(join(root, "src", "Excluded", "Legacy.php"), "<?php class Legacy {}\n");
+      await writeFile(join(root, "php-toolkit.json"), JSON.stringify({
+        architecture: {
+          layers: { Domain: { namespaces: ["App\\Domain\\"], mayDependOn: [] } },
+          exclude: ["./src/Excluded"],
+        },
+      }));
+      const identity = await createArchitectureCacheKey(root, await buildProjectProfile(root, null));
+      expect(identity.files).toBe(1);
+      expect(Object.keys(identity.fingerprints)).toEqual(["src/Local.php"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not discover PHP files through an external directory symlink", async () => {
     const root = await mkdtemp(join(tmpdir(), "architecture-cache-symlink-"));
     const outside = await mkdtemp(join(tmpdir(), "architecture-cache-outside-"));

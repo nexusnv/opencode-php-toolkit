@@ -85,6 +85,11 @@ export async function scanArchitecture(root, profile, options = {}) {
             return { ...cached, cacheHit: true, cacheMode: identity.mode };
     }
     const args = [SCRIPT_PATH, "--directory", root, "--format", "json"];
+    // PHP uses the same validated policy snapshot that is bound into the cache
+    // key, so a config change during the scan cannot poison a later cache hit.
+    const architecture = profile.toolkitConfig?.config.architecture;
+    if (architecture)
+        args.push("--config", JSON.stringify({ architecture }));
     if (options.maxFiles !== undefined)
         args.push("--max-files", String(Math.max(1, Math.min(500, Math.floor(options.maxFiles)))));
     const remainingMs = Math.floor(deadlineAt - Date.now());
@@ -117,7 +122,9 @@ export async function scanArchitecture(root, profile, options = {}) {
         payload.filesScanned === expectedPaths.length &&
         expectedPaths.length === actualPaths.length &&
         expectedPaths.every((path, index) => path === actualPaths[index] && identity.fingerprints[path] === fingerprints[path]);
-    if (!identity.truncated && fingerprintsMatch) {
+    // Metadata fingerprints cannot prove cross-process byte agreement, and a
+    // truncated scan is incomplete; neither is safe to reuse as a clean result.
+    if (!identity.truncated && identity.mode === "content" && !payload.truncated && fingerprintsMatch) {
         await writeArchitectureCache(identity.key, scanPayload, options.storage);
     }
     return result;

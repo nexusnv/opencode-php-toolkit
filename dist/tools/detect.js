@@ -180,7 +180,9 @@ async function detectCiConventions(root) {
                             if (nestedLine.trim() === "")
                                 continue;
                             const nestedIndent = nestedLine.match(/^\s*/)?.[0].length ?? 0;
-                            if (nestedIndent <= indent)
+                            // A YAML block sequence may start at the same indentation as
+                            // its mapping key; a sibling mapping key ends the list.
+                            if (nestedIndent <= indent && !/^\s*-\s/.test(nestedLine))
                                 break;
                             if (/^\s*-\s*/.test(nestedLine)) {
                                 for (const match of nestedLine.matchAll(/\b(?:7|8|9)\.\d+(?:\.\d+)?\b/g))

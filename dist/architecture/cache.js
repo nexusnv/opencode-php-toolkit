@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { lstat, opendir, readFile, realpath, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-export const ARCHITECTURE_SCANNER_VERSION = "4";
-const CACHE_PREFIX = "php-toolkit.architecture-scan.v4.";
+export const ARCHITECTURE_SCANNER_VERSION = "5";
+const CACHE_PREFIX = "php-toolkit.architecture-scan.v5.";
 const CONTENT_HASH_LIMIT = 1024 * 1024;
 const CONTENT_HASH_BUDGET = 16 * 1024 * 1024;
 const MAX_DIRECTORY_ENTRIES = 20_000;
@@ -40,7 +40,15 @@ async function toolkitVersion() {
 function excluded(relativePath) {
     return relativePath.split(/[\\/]/).some((part) => ["vendor", "node_modules", ".git", "var", "storage"].includes(part));
 }
-async function phpFiles(root, maxFiles, deadlineAt) {
+/** Applies the project's validated architecture excludes before files are counted. */
+function projectExcluded(relativePath, excludes) {
+    const normalizedPath = relativePath.split(/[\\/]/).join("/");
+    return excludes.some((exclude) => {
+        const prefix = exclude.trim().replace(/^\.\//, "").replace(/\/+$/, "").split(/[\\/]/).join("/");
+        return prefix !== "" && (normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`));
+    });
+}
+async function phpFiles(root, maxFiles, deadlineAt, excludes) {
     const files = [];
     const pending = [root];
     let visitedEntries = 0;
@@ -86,7 +94,7 @@ async function phpFiles(root, maxFiles, deadlineAt) {
         for (const entry of entries) {
             const path = join(directory, entry.name);
             const relativePath = relative(root, path);
-            if (excluded(relativePath) || entry.isSymbolicLink())
+            if (excluded(relativePath) || projectExcluded(relativePath, excludes) || entry.isSymbolicLink())
                 continue;
             if (entry.isDirectory())
                 childDirectories.push(path);
@@ -95,7 +103,7 @@ async function phpFiles(root, maxFiles, deadlineAt) {
                 if (!canonical)
                     continue;
                 const canonicalRelative = relative(root, canonical);
-                if (excluded(canonicalRelative))
+                if (excluded(canonicalRelative) || projectExcluded(canonicalRelative, excludes))
                     continue;
                 files.push(canonicalRelative.split(sep).join("/"));
                 if (files.length > maxFiles) {
@@ -117,7 +125,7 @@ async function phpFiles(root, maxFiles, deadlineAt) {
 export async function createArchitectureCacheKey(root, profile, maxFiles = 500, deadlineAt = Date.now() + 20_000) {
     const absoluteRoot = await realpath(resolve(root));
     const cap = Math.max(1, Math.min(DEFAULT_MAX_FILES, Math.floor(maxFiles)));
-    const listing = await phpFiles(absoluteRoot, cap, deadlineAt);
+    const listing = await phpFiles(absoluteRoot, cap, deadlineAt, profile.toolkitConfig?.config.architecture?.exclude ?? []);
     const files = listing.files;
     if (listing.timedOut) {
         return { key: "", mode: "content", files: files.length, truncated: listing.truncated, timedOut: true, fingerprints: {} };
