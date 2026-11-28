@@ -7,14 +7,17 @@ export const PKG_ROOT = join(here, "..");
 export async function loadText(rel) {
     return readFile(join(PKG_ROOT, rel), "utf8");
 }
+// Only single-line `key: value` pairs are parsed. Continuation lines and
+// multi-line YAML values are not interpreted; they are ignored by the parser.
 export function parseFrontmatter(body) {
     if (!body.startsWith("---"))
         return { front: {}, content: body };
-    const end = body.indexOf("\n---", 3);
+    const text = body.replace(/\r\n/g, "\n");
+    const end = text.indexOf("\n---", 3);
     if (end === -1)
         return { front: {}, content: body };
-    const raw = body.slice(3, end).trim();
-    const content = body.slice(end + 4).replace(/^\n/, "");
+    const raw = text.slice(3, end).trim();
+    const content = text.slice(end + 4).replace(/^\n/, "");
     const front = {};
     for (const line of raw.split("\n")) {
         const m = line.match(/^([A-Za-z0-9_-]+)\s*:\s*(.*)$/);

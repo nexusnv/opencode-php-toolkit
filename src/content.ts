@@ -10,12 +10,15 @@ export async function loadText(rel: string): Promise<string> {
   return readFile(join(PKG_ROOT, rel), "utf8");
 }
 
+// Only single-line `key: value` pairs are parsed. Continuation lines and
+// multi-line YAML values are not interpreted; they are ignored by the parser.
 export function parseFrontmatter(body: string): { front: Record<string, string>; content: string } {
   if (!body.startsWith("---")) return { front: {}, content: body };
-  const end = body.indexOf("\n---", 3);
+  const text = body.replace(/\r\n/g, "\n");
+  const end = text.indexOf("\n---", 3);
   if (end === -1) return { front: {}, content: body };
-  const raw = body.slice(3, end).trim();
-  const content = body.slice(end + 4).replace(/^\n/, "");
+  const raw = text.slice(3, end).trim();
+  const content = text.slice(end + 4).replace(/^\n/, "");
   const front: Record<string, string> = {};
   for (const line of raw.split("\n")) {
     const m = line.match(/^([A-Za-z0-9_-]+)\s*:\s*(.*)$/);

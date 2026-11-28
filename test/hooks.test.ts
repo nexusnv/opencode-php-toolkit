@@ -29,4 +29,20 @@ describe("isDestructiveShell", () => {
     expect(isDestructiveShell({ command: "cat composer.lock" })).toBeNull();
     expect(isDestructiveShell({ command: "git commit -m 'document rector usage'" })).toBeNull();
   });
+
+  it("flags a raw command string", () => {
+    expect(isDestructiveShell("composer update")).not.toBeNull();
+  });
+
+  it("ignores non-command fields and non-shell input shapes", () => {
+    expect(isDestructiveShell({ message: "docs: describe rector process usage" })).toBeNull();
+    expect(isDestructiveShell({ prompt: "please run composer update", file: "rector.php" })).toBeNull();
+    expect(isDestructiveShell(["composer update"])).toBeNull();
+    expect(isDestructiveShell(42)).toBeNull();
+  });
+
+  it("ignores destructive names inside quoted commit messages", () => {
+    expect(isDestructiveShell({ command: "git commit -m 'docs: describe rector process usage'" })).toBeNull();
+    expect(isDestructiveShell({ command: `git commit -m "php-cs-fixer fix src"` })).toBeNull();
+  });
 });
