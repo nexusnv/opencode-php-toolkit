@@ -16,17 +16,12 @@ Published package (after `npm publish`):
 // opencode.jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["opencode-php-toolkit@0.1.1"]
+  "plugins": ["opencode-php-toolkit@0.6.0"]
 }
 ```
 
-> The npm, tag and commit pins in this section point at the latest published
-> release (`0.1.1`). Several features described below are not in that release:
-> the pattern library and routing, `php_test`, `php_metrics`, `/php-toolkit-status`
-> and the postinstall agent copy. On `0.1.1`, copy the four `agents/php-*.md`
-> files from the package into `~/.config/opencode/agents/` manually. To try the
-> current features, use the local path form or a build from this branch. The
-> release checklist updates these pins.
+> The npm, tag and commit pins in this section point at release `0.6.0`.
+> Pinned installs do not update automatically; bump the version to upgrade.
 
 > On install, the package copies the five `agents/php-*.md` files into
 > `~/.config/opencode/agents/` as a convenience (see below). Existing files
@@ -42,7 +37,7 @@ as-is; always run `npm run build` before committing):
 # Latest on main
 opencode plugin add github:nexusnv/opencode-php-toolkit
 # Pinned (recommended for teams)
-opencode plugin add github:nexusnv/opencode-php-toolkit#v0.1.1
+opencode plugin add github:nexusnv/opencode-php-toolkit#v0.6.0
 ```
 
 Or per-project in `opencode.jsonc` (same spec forms, plus branch/commit):
@@ -50,9 +45,9 @@ Or per-project in `opencode.jsonc` (same spec forms, plus branch/commit):
 ```jsonc
 {
   "plugins": [
-    "github:nexusnv/opencode-php-toolkit#v0.1.1",
+    "github:nexusnv/opencode-php-toolkit#v0.6.0",
     "github:nexusnv/opencode-php-toolkit#main",
-    "git+ssh://git@github.com/nexusnv/opencode-php-toolkit.git#89a8211"
+    "git+ssh://git@github.com/nexusnv/opencode-php-toolkit.git#7ce6bb3"
   ]
 }
 ```

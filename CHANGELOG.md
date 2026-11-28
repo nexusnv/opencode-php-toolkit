@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] - 2026-11-28
 
 ### Added
 
@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Architecture scans use the validated boundary snapshot bound to the cache key; truncated and metadata-mode scans are never cached.
 - Cache discovery honors configured architecture excludes and bounded YAML matrices accept sequence entries at the key indentation.
 - Incomplete-scan summaries remain visible when a boundary violation is reported.
+
+### Notes
+
+This release completes roadmap phases 4 and 5 (previously planned as `0.5.0`
+and `0.6.0`). Architecture scanning stays on demand via
+`architectureScan: "tool"`; `"auto"` adds count-only Design summaries and
+`"off"` removes the tool. `php-toolkit.json` `verification.composerScripts`
+mappings are opt-in: mapped scripts run whole-project, execute project code,
+and pass through the session's command permissions. CI files are read for
+metadata only and are never executed. Existing skill, command, tool and agent
+IDs are unchanged.
 
 ## [0.4.0] - 2026-11-09
 
