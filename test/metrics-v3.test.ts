@@ -59,6 +59,8 @@ describe("metrics v3", () => {
       cacheHits: 0,
       cacheModes: { content: 0, metadata: 0 },
       lastRunAt: null,
+      lastStatus: null,
+      lastCacheMode: null,
     });
   });
 

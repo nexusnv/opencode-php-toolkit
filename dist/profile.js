@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import { access, readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { PKG_ROOT } from "./content.js";
+import { readProjectToolkitConfig } from "./project-config.js";
 import { detectPhpProject } from "./tools/detect.js";
+import { readTextPrefix } from "./tools/bounded-read.js";
 let packageVersionPromise;
 function packageVersion() {
     packageVersionPromise ??= readFile(join(PKG_ROOT, "package.json"), "utf8")
@@ -118,9 +120,31 @@ async function releaseMetadata(root) {
 }
 async function hashedFiles(root) {
     const configFiles = await probeConfigFiles(root);
+    const ciFiles = [];
+    try {
+        const workflows = await readdir(join(root, ".github/workflows"), { withFileTypes: true });
+        ciFiles.push(...workflows
+            .filter((entry) => entry.isFile() && /\.ya?ml$/i.test(entry.name))
+            .map((entry) => `.github/workflows/${entry.name}`)
+            .sort()
+            .slice(0, 16));
+    }
+    catch {
+        // GitHub Actions is not configured.
+    }
+    for (const name of [
+        ".gitlab-ci.yml",
+        ".circleci/config.yml",
+        "bitbucket-pipelines.yml",
+        "azure-pipelines.yml",
+    ]) {
+        if (await exists(join(root, name)))
+            ciFiles.push(name);
+    }
     return [
         "composer.json",
         ...Object.values(configFiles).filter((name) => typeof name === "string"),
+        ...ciFiles.slice(0, 20),
     ].sort();
 }
 /** Cheap signature used to decide whether hashing file contents is needed. */
@@ -143,7 +167,17 @@ async function computeFingerprint(root) {
     const parts = [await packageVersion()];
     for (const name of files) {
         try {
-            parts.push(`${name}\0${await readFile(join(root, name), "utf8")}`);
+            const path = join(root, name);
+            const isCiManifest = /(?:\.ya?ml)$/i.test(name) &&
+                (name.startsWith(".github/workflows/") || name.startsWith(".circleci/") || name.startsWith(".gitlab-ci") || name.startsWith("bitbucket-pipelines") || name.startsWith("azure-pipelines"));
+            if (isCiManifest) {
+                const info = await stat(path);
+                const prefix = await readTextPrefix(path, 128 * 1024);
+                parts.push(`${name}\0${info.size}\0${info.mtimeMs}\0${prefix}`);
+            }
+            else {
+                parts.push(`${name}\0${await readFile(path, "utf8")}`);
+            }
         }
         catch {
             // A config that vanished between probing and hashing simply drops out.
@@ -217,6 +251,7 @@ async function computeLayoutMarkerSignature(root) {
 export async function buildProjectProfile(root, subpath) {
     const info = await detectPhpProject(root);
     const configFiles = await probeConfigFiles(root);
+    const toolkitConfig = await readProjectToolkitConfig(root);
     const identity = await readComposerIdentity(root);
     const [hasPublicIndex, hasConsoleBin, hasConfigDir, hasMigrations, templates, views, release] = await Promise.all([
         exists(join(root, "public/index.php")),
@@ -308,6 +343,9 @@ export async function buildProjectProfile(root, subpath) {
         autoloadPsr4: psr4,
         packageName: identity.packageName,
         packageType: identity.packageType,
+        composerScriptNames: info.scriptNames,
+        composerScriptTools: info.scriptTools,
+        ci: info.ci,
         frameworkHints: frameworks.hints,
         tools: {
             phpunit: info.detectedTools.phpunit,
@@ -321,6 +359,7 @@ export async function buildProjectProfile(root, subpath) {
             infection: info.detectedTools.infection,
         },
         configFiles,
+        toolkitConfig,
         layout: {
             sourceRoots: [...new Set(Object.values(psr4).flat())],
             testRoots,

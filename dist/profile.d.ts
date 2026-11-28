@@ -1,3 +1,4 @@
+import { type ProjectToolkitConfigResult } from "./project-config.js";
 export type ProjectType = "application" | "library" | "unknown";
 export type Confidence = "high" | "medium" | "low";
 export type FrameworkHint = "laravel" | "symfony" | "wordpress" | "none";
@@ -13,6 +14,13 @@ export interface ProjectProfile {
     autoloadPsr4: Record<string, string[]>;
     packageName: string | null;
     packageType: string | null;
+    composerScriptNames: string[];
+    composerScriptTools: string[];
+    ci: {
+        providers: string[];
+        phpVersions: string[];
+        tools: string[];
+    };
     frameworkHints: FrameworkHint[];
     tools: {
         phpunit: boolean;
@@ -35,6 +43,7 @@ export interface ProjectProfile {
         deptrac: string | null;
         architecture: string | null;
     };
+    toolkitConfig: ProjectToolkitConfigResult;
     layout: {
         sourceRoots: string[];
         testRoots: string[];

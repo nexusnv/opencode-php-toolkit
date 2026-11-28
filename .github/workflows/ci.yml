@@ -23,6 +23,11 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
+      - name: Set up PHP for scanner CLI tests
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          coverage: none
       - run: npm ci
       - run: npm run typecheck
       - run: npm test

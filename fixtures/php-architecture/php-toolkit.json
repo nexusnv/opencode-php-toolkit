@@ -1,0 +1,9 @@
+{
+  "architecture": {
+    "layers": {
+      "Domain": { "namespaces": ["App\\Domain\\"], "mayDependOn": [] },
+      "Infrastructure": { "namespaces": ["App\\Infrastructure\\"], "mayDependOn": ["Domain"] }
+    },
+    "exclude": ["src/Excluded"]
+  }
+}

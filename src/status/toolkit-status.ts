@@ -1,6 +1,6 @@
 import type { Plugin } from "@opencode/plugin";
 import type { ToolkitConfig } from "../config.js";
-import type { VerificationMetrics } from "../metrics/store.js";
+import type { ScannerMetrics, VerificationMetrics } from "../metrics/store.js";
 import { formatTimestamp } from "../metrics/format.js";
 import type { ProjectProfile, ProjectProfileCache } from "../profile.js";
 import { cacheSessionState, loadPersistedSessionState } from "../routing/persistence.js";
@@ -12,6 +12,7 @@ export interface ToolkitStatusInput {
   state: SessionRoutingState | null;
   config: ToolkitConfig;
   verification?: VerificationMetrics | null;
+  scanner?: ScannerMetrics | null;
 }
 
 function slug(target: string): string {
@@ -44,6 +45,26 @@ function projectLine(profile: ProjectProfile): string {
   return `  Project: ${profile.root} (${details.join(", ")})`;
 }
 
+function projectConventions(profile: ProjectProfile): string[] {
+  const lines: string[] = [];
+  const scripts = profile.toolkitConfig?.config.verification?.composerScripts;
+  if (scripts) {
+    const mapped = (["tests", "static", "style"] as const)
+      .filter((check) => typeof scripts[check] === "string")
+      .map((check) => `${check}=${scripts[check]}`);
+    if (mapped.length) lines.push(`  Configured verification scripts: ${mapped.join(", ")}`);
+  }
+  const ci = profile.ci;
+  if (ci && (ci.providers.length || ci.phpVersions.length || ci.tools.length)) {
+    const details = [
+      ci.phpVersions.length ? `PHP: ${ci.phpVersions.join(", ")}` : "",
+      ci.tools.length ? `tools: ${ci.tools.join(", ")}` : "",
+    ].filter(Boolean);
+    lines.push(`  CI conventions: ${ci.providers.join(", ") || "unknown provider"}${details.length ? ` (${details.join("; ")})` : ""}`);
+  }
+  return lines;
+}
+
 function list(values: readonly string[]): string {
   return values.length ? values.join(", ") : "none";
 }
@@ -67,6 +88,12 @@ function verificationLine(verification?: VerificationMetrics | null): string {
   } (${verification.runs} run(s), ${verification.findings} finding(s))`;
 }
 
+function scannerLine(scanner?: ScannerMetrics | null): string {
+  if (!scanner || scanner.runs === 0 || !scanner.lastRunAt) return "  Architecture scan: not run yet";
+  const cache = scanner.lastCacheMode ? `; ${scanner.lastCacheMode} cache` : "";
+  return `  Architecture scan: ${scanner.lastStatus ?? "unknown"} (${scanner.findings} findings, ${scanner.hypotheses} hypotheses${cache})`;
+}
+
 export function renderToolkitStatus(input: ToolkitStatusInput): string {
   const { profile, state, config } = input;
   const lines = ["PHP toolkit status"];
@@ -76,6 +103,7 @@ export function renderToolkitStatus(input: ToolkitStatusInput): string {
   } else {
     lines.push(projectLine(profile));
     lines.push(`  Root: ${profile.root} (subpath: ${profile.subpath ?? "none"})`);
+    lines.push(...projectConventions(profile));
   }
 
   if (!state) {
@@ -116,6 +144,7 @@ export function renderToolkitStatus(input: ToolkitStatusInput): string {
     `  Mode: ${config.architectureMode} | scan: ${config.architectureScan} | announce: ${config.announceSelections}`,
   );
   lines.push(verificationLine(input.verification));
+  lines.push(scannerLine(input.scanner));
   return lines.join("\n");
 }
 
@@ -128,6 +157,7 @@ export async function buildCurrentStatusSnapshot(
     renderContexts?: RoutingRenderContexts;
     config: ToolkitConfig;
     verificationFor?: (root: string) => Promise<VerificationMetrics>;
+    scannerFor?: (root: string) => Promise<ScannerMetrics>;
   },
 ): Promise<string> {
   const session = await ctx.session
@@ -141,6 +171,7 @@ export async function buildCurrentStatusSnapshot(
       state: null,
       config: input.config,
       verification: null,
+      scanner: null,
     });
   }
 
@@ -178,5 +209,6 @@ export async function buildCurrentStatusSnapshot(
     state: view,
     config: input.config,
     verification: (await input.verificationFor?.(root)) ?? null,
+    scanner: (await input.scannerFor?.(root)) ?? null,
   });
 }

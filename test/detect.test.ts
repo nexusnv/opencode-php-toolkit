@@ -1,13 +1,15 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { detectPhpProject, formatDetection } from "../src/tools/detect.js";
 
 function workspace(files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), "php-toolkit-detect-"));
   for (const [name, body] of Object.entries(files)) {
-    writeFileSync(join(dir, name), body);
+    const file = join(dir, name);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, body);
   }
   return dir;
 }
@@ -95,5 +97,51 @@ describe("detectPhpProject", () => {
     expect(info.hasComposerLock).toBe(true);
     expect(info.configs).toContain("phpstan.neon");
     expect(formatDetection(info)).toContain("phpstan.neon");
+  });
+
+  it("still detects CI conventions when composer.json is malformed", async () => {
+    const dir = workspace({
+      "composer.json": "{ this is not json",
+      ".gitlab-ci.yml": "test:\n  image: php:8.4\n",
+    });
+    const info = await detectPhpProject(dir);
+    expect(info.ci.providers).toEqual(["gitlab-ci"]);
+    expect(info.ci.phpVersions).toEqual(["8.4"]);
+  });
+
+  it("extracts only script names, known tools, CI providers, PHP versions, and tool conventions", async () => {
+    const dir = workspace({
+      "composer.json": manifest({ scripts: { test: "vendor/bin/phpunit --testsuite unit", analyse: "vendor/bin/phpstan analyse" } }),
+      ".github/workflows/ci.yml": "strategy:\n  matrix:\n    php: ['8.1', '8.2']\nsteps:\n  - run: vendor/bin/pest\n  - run: vendor/bin/phpstan analyse\n  - run: echo $SECRET\n",
+      ".gitlab-ci.yml": "test:\n  image: php:8.3\n",
+    });
+    const info = await detectPhpProject(dir);
+    expect(info.scriptNames).toEqual(["analyse", "test"]);
+    expect(info.scriptTools).toEqual(["phpunit", "phpstan"]);
+    expect(info.ci.providers).toEqual(["github-actions", "gitlab-ci"]);
+    expect(info.ci.phpVersions).toEqual(["8.1", "8.2", "8.3"]);
+    expect(info.ci.tools).toEqual(["pest", "phpstan"]);
+    expect(JSON.stringify(info.ci)).not.toContain("SECRET");
+    expect(JSON.stringify(info)).not.toContain("vendor/bin/phpunit --testsuite unit");
+    expect(formatDetection(info)).not.toContain("$SECRET");
+    expect(formatDetection(info)).not.toContain("vendor/bin/phpstan analyse");
+    expect(formatDetection(info)).not.toContain("run: echo");
+  });
+
+  it("reads block matrices whose sequence entries share the php key indentation", async () => {
+    const dir = workspace({
+      ".github/workflows/ci.yml": "strategy:\n  matrix:\n    php:\n    - '8.2'\n    - '8.3'\n  run: echo ok\n",
+    });
+    const info = await detectPhpProject(dir);
+    expect(info.ci.phpVersions).toEqual(["8.2", "8.3"]);
+  });
+
+  it("detects block PHP matrices without treating Composer dependency versions as PHP", async () => {
+    const dir = workspace({
+      "composer.json": manifest({ require: { php: ">=8.1", "vendor/library": "^9.4" } }),
+      ".github/workflows/ci.yml": "strategy:\n  matrix:\n    php:\n      - '8.2'\n      - '8.3'\n    dependencies:\n      - '9.4'\nsteps:\n  - run: composer require phpunit/phpunit:^10.4\n",
+    });
+    const info = await detectPhpProject(dir);
+    expect(info.ci.phpVersions).toEqual(["8.2", "8.3"]);
   });
 });

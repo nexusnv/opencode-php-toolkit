@@ -238,6 +238,44 @@ describe("phpVerify", () => {
     });
   });
 
+  it("uses a validated Composer script only for an explicitly requested mapped check", async () => {
+    const root = project(["src/A.php", "composer.json"]);
+    const calls: Array<{ cmd: string; args: readonly string[] }> = [];
+    const report = await phpVerify(
+      { scope: "changed", checks: ["tests"] },
+      deps(root, {
+        profileFor: async () => profile({
+          toolkitConfig: { config: { architecture: null, routing: { disableSkills: [], extraSkills: [] }, verification: { composerScripts: { tests: "ci-test" } } }, diagnostics: [], present: true },
+        }),
+        runner: runner((cmd, args) => {
+          calls.push({ cmd, args });
+          return defaultScript(cmd);
+        }),
+      }),
+    );
+    expect(calls).toEqual([{ cmd: "composer", args: ["run-script", "--no-interaction", "ci-test"] }]);
+    expect(report.checks[0]?.summary).toContain("whole-project");
+    expect(report.text).toContain("whole-project");
+  });
+
+  it("keeps mapped Composer scripts out of implicit default checks", async () => {
+    const root = project(["src/A.php", "composer.json"]);
+    const calls: string[] = [];
+    await phpVerify(
+      { scope: "all" },
+      deps(root, {
+        profileFor: async () => profile({
+          toolkitConfig: { config: { architecture: null, routing: { disableSkills: [], extraSkills: [] }, verification: { composerScripts: { tests: "ci-test" } } }, diagnostics: [], present: true },
+        }),
+        runner: runner((cmd, args) => {
+          calls.push([cmd, ...args].join(" "));
+          return defaultScript(cmd);
+        }),
+      }),
+    );
+    expect(calls.some((call) => call.includes("composer run-script"))).toBe(false);
+  });
+
   it("cancels every check when the signal is already aborted", async () => {
     const root = project(["src/A.php", "composer.json"]);
     const controller = new AbortController();

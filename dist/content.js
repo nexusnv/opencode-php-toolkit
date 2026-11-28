@@ -52,6 +52,8 @@ export const COMMAND_DEFS = [
     { file: "commands/php-test.md", name: "php-test", fallback: "Run and improve PHP tests (PHPUnit/Pest)" },
     { file: "commands/php-audit.md", name: "php-audit", fallback: "Audit PHP dependencies and security" },
     { file: "commands/php-upgrade.md", name: "php-upgrade", fallback: "Plan PHP 8.1+ upgrade with Rector dry-run" },
+    { file: "commands/php-design.md", name: "php-design", fallback: "Shape a PHP design with risk-based approval" },
+    { file: "commands/php-architect.md", name: "php-architect", fallback: "Plan a significant PHP architecture change and wait for approval" },
     { file: "commands/php-scaffold.md", name: "php-scaffold", fallback: "Scaffold PSR-4 PHP class + test" },
     { file: "commands/php-toolkit-status.md", name: "php-toolkit-status", fallback: "Show PHP toolkit routing diagnostics" },
 ];

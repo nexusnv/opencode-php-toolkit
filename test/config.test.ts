@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { readToolkitConfig } from "../src/config.js";
 
 describe("readToolkitConfig", () => {
+  it("keeps architecture scanning on-demand by default and supports opt-in auto mode", () => {
+    expect(readToolkitConfig({}).architectureScan).toBe("tool");
+    expect(readToolkitConfig({ architectureScan: "auto" }).architectureScan).toBe("auto");
+    expect(readToolkitConfig({ architectureScan: "off" }).architectureScan).toBe("off");
+  });
   it("uses least-friction defaults", () => {
     expect(readToolkitConfig(undefined)).toEqual({
       autoSkills: "attach",

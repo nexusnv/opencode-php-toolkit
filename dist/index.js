@@ -16,6 +16,9 @@ import { cacheSessionState, loadPersistedSessionState, persistStorageState, prun
 import { applyPermissionsEvent, applySkillActivatedEvent, } from "./routing/events.js";
 import { l0Part, removePhpToolkitParts, renderToolkitStatePart, statePart, } from "./context/parts.js";
 import { buildCurrentStatusSnapshot } from "./status/toolkit-status.js";
+import { scanArchitecture } from "./architecture/scanner.js";
+import { authorizedRunner, execFileRunner } from "./tools/runner.js";
+import { evaluateCommand, toCommandDecision } from "./verify/permissions.js";
 function skillTitle(id) {
     return id
         .split("-")
@@ -199,6 +202,11 @@ export default Plugin.define({
                                         await store.init().catch(() => { });
                                         return store.getSnapshot().verification;
                                     },
+                                    scannerFor: async (root) => {
+                                        const store = metrics.storeFor(root);
+                                        await store.init().catch(() => { });
+                                        return store.getSnapshot().scanner;
+                                    },
                                 });
                                 await ctx.session.prompt({
                                     sessionID,
@@ -332,6 +340,63 @@ export default Plugin.define({
                         return phpTest(cwd, context.signal, input.filter);
                     }),
                 });
+                if (config.architectureScan !== "off") {
+                    editor.add({
+                        name: "architecture_scan",
+                        description: "Read-only PHP architecture scan using PHP's built-in tokenizer. Reports explicit configured boundaries, structural metrics, and clearly labeled heuristic hypotheses. Runs only when called; auto mode adds a bounded summary for Architecture Design tasks.",
+                        input: {
+                            type: "object",
+                            properties: {
+                                directory: { type: "string" },
+                                maxFiles: { type: "integer", minimum: 1, maximum: 500, default: 500 },
+                                refresh: { type: "boolean", default: false },
+                            },
+                            additionalProperties: false,
+                        },
+                        options: { namespace: "php" },
+                        execute: tracked("php_architecture_scan", async (input, context) => {
+                            let session;
+                            try {
+                                session = await ctx.session.get({ sessionID: context.sessionID });
+                            }
+                            catch {
+                                return { text: "php_architecture_scan: session permissions could not be resolved; scan was not run.", status: "error", findings: 0 };
+                            }
+                            const cwd = cwdOf(input);
+                            const profile = await profileCache.resolve(cwd, cwd === session.location.directory ? session.subpath ?? null : null);
+                            const runner = authorizedRunner(execFileRunner, (cmd, args, commandCwd) => toCommandDecision(evaluateCommand(session?.permissions ?? [], cmd, args, commandCwd)));
+                            const scan = await scanArchitecture(cwd, profile, {
+                                runner,
+                                storage: ctx.storage,
+                                signal: context.signal,
+                                maxFiles: input.maxFiles,
+                                refresh: input.refresh,
+                            });
+                            const findings = scan.results.filter((item) => item.kind === "finding").length;
+                            const hypotheses = scan.results.filter((item) => item.kind === "hypothesis").length;
+                            const metricCount = scan.results.filter((item) => item.kind === "metric").length;
+                            await metrics.storeFor(cwd).recordScanner({
+                                status: scan.status,
+                                findings,
+                                hypotheses,
+                                truncated: scan.truncated,
+                                cacheHit: scan.cacheHit,
+                                cacheMode: scan.cacheMode,
+                            }).catch(() => { });
+                            const details = scan.results.map((item) => {
+                                const where = item.file ? `${item.file}${item.line ? `:${item.line}` : ""}: ` : "";
+                                const evidence = item.evidence ? ` [${item.evidence}]` : "";
+                                return `- ${item.kind}: ${where}${item.message}${evidence}`;
+                            }).join("\n");
+                            const summary = `php_architecture_scan: ${scan.status}; ${scan.filesScanned} PHP file(s), ${findings} finding(s), ${hypotheses} hypothesis/hypotheses, ${metricCount} metric(s); cache ${scan.cacheHit ? "hit" : "miss"} (${scan.cacheMode ?? "none"})${scan.truncated ? "; file limit reached" : ""}.`;
+                            return {
+                                text: [summary, ...scan.diagnostics.map((message) => `Diagnostic: ${message}`), scan.error ? `Error: ${scan.error}` : "", details].filter(Boolean).join("\n").slice(0, 24_000),
+                                status: scan.status === "ok" ? "ok" : "error",
+                                findings,
+                            };
+                        }),
+                    });
+                }
                 editor.add({
                     name: "verify",
                     description: "Run the project's own verification checks and return one report: lint, composer, tests, static analysis, style and architecture. Non-mutating: never installs dependencies, edits configuration or applies fixes; style checks are dry-run. scope=changed uses the host VCS working tree and maps production changes to tests; scope=all runs the full suite/analysis. Respects session command permissions; denied checks are reported as cancelled, never bypassed.",
@@ -490,7 +555,7 @@ export default Plugin.define({
                     }
                 }
             }));
-            track(await ctx.session.hook("context", (event) => {
+            track(await ctx.session.hook("context", async (event) => {
                 event.system = removePhpToolkitParts(event.system);
                 event.system.push(l0Part());
                 const render = renderContexts.get(event.sessionID);
@@ -500,6 +565,37 @@ export default Plugin.define({
                     }
                     catch (err) {
                         console.error(`[php-toolkit] context render failed: ${err.message}`);
+                    }
+                    if (config.architectureScan === "auto" &&
+                        render.state.activeIntents.includes("Design") &&
+                        render.state.activeConcerns.includes("Architecture")) {
+                        try {
+                            const session = await ctx.session.get({ sessionID: event.sessionID });
+                            const runner = authorizedRunner(execFileRunner, (cmd, args, commandCwd) => toCommandDecision(evaluateCommand(session.permissions ?? [], cmd, args, commandCwd)));
+                            const scan = await scanArchitecture(render.state.projectRoot, render.profile, {
+                                runner,
+                                storage: ctx.storage,
+                                maxFiles: 100,
+                                timeoutMs: 2_000,
+                            });
+                            const findings = scan.results.filter((item) => item.kind === "finding").length;
+                            const hypotheses = scan.results.filter((item) => item.kind === "hypothesis").length;
+                            const metricsCount = scan.results.filter((item) => item.kind === "metric").length;
+                            await metrics.storeFor(render.state.projectRoot).recordScanner({
+                                status: scan.status,
+                                findings,
+                                hypotheses,
+                                truncated: scan.truncated,
+                                cacheHit: scan.cacheHit,
+                                cacheMode: scan.cacheMode,
+                            }).catch(() => { });
+                            event.system.push(statePart(scan.status === "ok"
+                                ? `Architecture scan summary: ${findings} finding(s), ${hypotheses} hypothesis/hypotheses, ${metricsCount} structural metric(s). Full scan details are available in php_architecture_scan.`
+                                : `Architecture scan summary: ${scan.status}; no scan details are available.`));
+                        }
+                        catch {
+                            // Automatic guidance is opportunistic and must not block context rendering.
+                        }
                     }
                 }
             }));

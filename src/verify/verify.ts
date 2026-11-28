@@ -3,6 +3,7 @@ import type { PermissionRule } from "../routing/permissions.js";
 import { authorizedRunner, execFileRunner, type CommandRunner } from "../tools/runner.js";
 import { findingsTotal } from "./aggregate.js";
 import { architectureCheck, architectureDetected } from "./checks/architecture.js";
+import { composerScriptCheck } from "./checks/composer-script.js";
 import { composerCheck } from "./checks/composer.js";
 import { lintCheck } from "./checks/lint.js";
 import type { CheckEnvironment } from "./checks/shared.js";
@@ -189,6 +190,9 @@ export async function phpVerify(
   );
   const requested = input.checks ?? detectedChecks(profile);
   const ordered = VERIFICATION_CHECKS.filter((check) => requested.includes(check));
+  const mappedScripts = input.checks !== undefined
+    ? profile.toolkitConfig?.config.verification?.composerScripts
+    : undefined;
   const changedUnavailable = scope === "changed" && !provided && changed.source === "unavailable";
   const emptyChanged =
     scope === "changed" &&
@@ -199,6 +203,8 @@ export async function phpVerify(
 
   const results: CheckResult[] = [];
   for (const check of ordered) {
+    const scriptName = mappedScripts?.[check as "tests" | "static" | "style"];
+    const wholeProjectScript = typeof scriptName === "string" && scriptName.length > 0;
     if (deps.signal.aborted) {
       results.push({
         check,
@@ -210,7 +216,7 @@ export async function phpVerify(
       });
       continue;
     }
-    if ((changedUnavailable && CHANGED_FILE_CHECKS.has(check)) || (provided && changed.source === "unavailable" && check === "tests")) {
+    if (!wholeProjectScript && ((changedUnavailable && CHANGED_FILE_CHECKS.has(check)) || (provided && changed.source === "unavailable" && check === "tests"))) {
       results.push({
         check,
         status: "unavailable",
@@ -221,7 +227,7 @@ export async function phpVerify(
       });
       continue;
     }
-    if (emptyChanged && CHANGED_FILE_CHECKS.has(check)) {
+    if (!wholeProjectScript && emptyChanged && CHANGED_FILE_CHECKS.has(check)) {
       results.push({
         check,
         status: "skipped",
@@ -234,16 +240,31 @@ export async function phpVerify(
     }
     try {
       results.push(
-        await ADAPTERS[check]({
-          root,
-          profile,
-          scope,
-          changed,
-          files,
-          pathOverride: provided !== null,
-          runner: gated,
-          signal: deps.signal,
-        }),
+        wholeProjectScript
+          ? await composerScriptCheck(
+              {
+                root,
+                profile,
+                scope,
+                changed,
+                files,
+                pathOverride: provided !== null,
+                runner: gated,
+                signal: deps.signal,
+              },
+              check,
+              scriptName,
+            )
+          : await ADAPTERS[check]({
+              root,
+              profile,
+              scope,
+              changed,
+              files,
+              pathOverride: provided !== null,
+              runner: gated,
+              signal: deps.signal,
+            }),
       );
     } catch {
       results.push({

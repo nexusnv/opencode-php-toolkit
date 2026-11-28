@@ -71,7 +71,11 @@ export interface ScannerMetrics {
   cacheHits: number;
   cacheModes: { content: number; metadata: number };
   lastRunAt: string | null;
+  lastStatus: ScannerRunStatus | null;
+  lastCacheMode: "content" | "metadata" | null;
 }
+
+export type ScannerRunStatus = "ok" | "unavailable" | "timed-out" | "cancelled" | "error";
 
 export interface PhpToolkitMetrics {
   version: number;
@@ -166,6 +170,8 @@ export function emptyScannerMetrics(): ScannerMetrics {
     cacheHits: 0,
     cacheModes: { content: 0, metadata: 0 },
     lastRunAt: null,
+    lastStatus: null,
+    lastCacheMode: null,
   };
 }
 
@@ -366,6 +372,12 @@ function migrateScanner(raw: unknown): ScannerMetrics {
       metadata: nonNegative(num(modes.metadata)),
     },
     lastRunAt: typeof candidate.lastRunAt === "string" ? candidate.lastRunAt : null,
+    lastStatus: ["ok", "unavailable", "timed-out", "cancelled", "error"].includes(String(candidate.lastStatus))
+      ? candidate.lastStatus as ScannerRunStatus
+      : null,
+    lastCacheMode: candidate.lastCacheMode === "content" || candidate.lastCacheMode === "metadata"
+      ? candidate.lastCacheMode
+      : null,
   };
 }
 
@@ -407,6 +419,7 @@ export type MetricsDelta = {
   triggerHits: number;
   routing: RoutingMetrics;
   verification: VerificationMetrics;
+  scanner?: ScannerMetrics;
 };
 
 function emptyDelta(): MetricsDelta {
@@ -416,6 +429,7 @@ function emptyDelta(): MetricsDelta {
     triggerHits: 0,
     routing: emptyRoutingMetrics(),
     verification: emptyVerificationMetrics(),
+    scanner: emptyScannerMetrics(),
   };
 }
 
@@ -452,12 +466,22 @@ function isEmptyVerification(verification: VerificationMetrics): boolean {
 }
 
 function isEmptyDelta(delta: MetricsDelta): boolean {
+  const scanner = delta.scanner ?? emptyScannerMetrics();
   return (
     delta.triggerHits === 0 &&
     Object.keys(delta.tools).length === 0 &&
     Object.keys(delta.commands).length === 0 &&
     isEmptyRouting(delta.routing) &&
-    isEmptyVerification(delta.verification)
+    isEmptyVerification(delta.verification) &&
+    scanner.runs === 0 &&
+    scanner.findings === 0 &&
+    scanner.hypotheses === 0 &&
+    scanner.truncated === 0 &&
+    scanner.cacheHits === 0 &&
+    scanner.cacheModes.content === 0 &&
+    scanner.cacheModes.metadata === 0 &&
+    scanner.lastRunAt === null &&
+    scanner.lastStatus === null
   );
 }
 
@@ -572,6 +596,8 @@ export function applyRoutingEvent(
  * flight must survive the retry, not be overwritten by it.
  */
 export function mergeDelta(a: MetricsDelta, b: MetricsDelta): MetricsDelta {
+  const scannerA = a.scanner ?? emptyScannerMetrics();
+  const scannerB = b.scanner ?? emptyScannerMetrics();
   const tools: MetricsDelta["tools"] = {};
   for (const [name, e] of Object.entries(a.tools)) tools[name] = { ...e };
   for (const [name, e] of Object.entries(b.tools)) {
@@ -609,6 +635,22 @@ export function mergeDelta(a: MetricsDelta, b: MetricsDelta): MetricsDelta {
     triggerHits: a.triggerHits + b.triggerHits,
     routing: mergeRoutingMetrics(a.routing, b.routing),
     verification: mergeVerification(a.verification, b.verification),
+    scanner: mergeScannerMetrics(scannerA, scannerB),
+  };
+}
+
+function mergeScannerMetrics(a: ScannerMetrics, b: ScannerMetrics): ScannerMetrics {
+  const latest = (a.lastRunAt ?? "") > (b.lastRunAt ?? "") ? a : b;
+  return {
+    runs: a.runs + b.runs,
+    findings: a.findings + b.findings,
+    hypotheses: a.hypotheses + b.hypotheses,
+    truncated: a.truncated + b.truncated,
+    cacheHits: a.cacheHits + b.cacheHits,
+    cacheModes: { content: a.cacheModes.content + b.cacheModes.content, metadata: a.cacheModes.metadata + b.cacheModes.metadata },
+    lastRunAt: latest.lastRunAt,
+    lastStatus: latest.lastStatus,
+    lastCacheMode: latest.lastCacheMode,
   };
 }
 
@@ -633,6 +675,7 @@ function mergeVerification(a: VerificationMetrics, b: VerificationMetrics): Veri
 
 /** Applies pending increments to a document, producing the merged view. */
 function applyDelta(base: PhpToolkitMetrics, delta: MetricsDelta): PhpToolkitMetrics {
+  const scannerDelta = delta.scanner ?? emptyScannerMetrics();
   const tools: Record<string, ToolMetricEntry> = {};
   for (const [name, entry] of Object.entries(base.tools)) {
     tools[name] = { ...entry };
@@ -676,6 +719,7 @@ function applyDelta(base: PhpToolkitMetrics, delta: MetricsDelta): PhpToolkitMet
       base.verification ?? emptyVerificationMetrics(),
       delta.verification,
     ),
+    scanner: mergeScannerMetrics(base.scanner, scannerDelta),
   };
 }
 
@@ -838,6 +882,27 @@ export class MetricsStore {
     verification.findings += nonNegative(input.findings);
     verification.lastRunAt = now;
     verification.lastStatus = input.status;
+    this.markDirty();
+  }
+
+  async recordScanner(input: {
+    status: ScannerRunStatus;
+    findings: number;
+    hypotheses: number;
+    truncated: boolean;
+    cacheHit: boolean;
+    cacheMode: "content" | "metadata" | null;
+  }): Promise<void> {
+    const scanner = this.delta.scanner ?? (this.delta.scanner = emptyScannerMetrics());
+    scanner.runs += 1;
+    scanner.findings += nonNegative(input.findings);
+    scanner.hypotheses += nonNegative(input.hypotheses);
+    scanner.truncated += input.truncated ? 1 : 0;
+    scanner.cacheHits += input.cacheHit ? 1 : 0;
+    if (input.cacheMode) scanner.cacheModes[input.cacheMode] += 1;
+    scanner.lastRunAt = new Date().toISOString();
+    scanner.lastStatus = input.status;
+    scanner.lastCacheMode = input.cacheMode;
     this.markDirty();
   }
 

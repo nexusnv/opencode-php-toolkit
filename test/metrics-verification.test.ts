@@ -94,6 +94,39 @@ describe("recordVerification", () => {
   });
 });
 
+describe("recordScanner", () => {
+  it("stores only aggregate counts, status, cache mode, and timestamp", async () => {
+    const store = new MetricsStore(memoryStorage(), project);
+    await store.recordScanner({ status: "ok", findings: 2, hypotheses: 3, truncated: true, cacheHit: true, cacheMode: "metadata" });
+    const scanner = store.getSnapshot().scanner;
+    expect(scanner).toMatchObject({ runs: 1, findings: 2, hypotheses: 3, truncated: 1, cacheHits: 1, cacheModes: { metadata: 1 }, lastStatus: "ok" });
+    expect(JSON.stringify(scanner)).not.toMatch(/path|evidence|Example\.php/i);
+  });
+
+  it("merges scanner counters and takes run metadata from the newest stored update", async () => {
+    const storage = memoryStorage();
+    const first = new MetricsStore(storage, project);
+    await first.recordScanner({ status: "ok", findings: 1, hypotheses: 2, truncated: false, cacheHit: false, cacheMode: "content" });
+    await first.flush();
+
+    const second = new MetricsStore(storage, project);
+    await second.init();
+    await second.recordScanner({ status: "error", findings: 3, hypotheses: 4, truncated: true, cacheHit: true, cacheMode: "metadata" });
+    await second.flush();
+
+    expect(second.getSnapshot().scanner).toMatchObject({
+      runs: 2,
+      findings: 4,
+      hypotheses: 6,
+      truncated: 1,
+      cacheHits: 1,
+      cacheModes: { content: 1, metadata: 1 },
+      lastStatus: "error",
+      lastCacheMode: "metadata",
+    });
+  });
+});
+
 describe("verification merge and migration", () => {
   it("sums counters and keeps the later last run", () => {
     const base: MetricsDelta = {

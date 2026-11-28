@@ -71,6 +71,17 @@ describe("renderVerificationReport", () => {
     expect(report.text).toContain("fix the failing checks");
   });
 
+  it("explains whole-project Composer script execution and side effects", () => {
+    const report = renderVerificationReport({
+      scope: "changed",
+      checks: [passed("tests", "whole-project Composer script 'ci-test' (project-defined code; may have side effects) passed")],
+      permissionNote: null,
+      changedNote: null,
+    });
+    expect(report.text).toContain("whole-project Composer script 'ci-test'");
+    expect(report.text).toContain("project-defined code; may have side effects");
+  });
+
   it("caps the report at 24,000 characters without dropping later rows or the summary", () => {
     const report = renderVerificationReport({
       scope: "changed",

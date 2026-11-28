@@ -1,5 +1,6 @@
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { readTextPrefix } from "./bounded-read.js";
 /** Config files the toolkit knows how to pick up; presence is all that is reported. */
 const CONFIG_FILES = [
     "phpstan.neon",
@@ -23,7 +24,9 @@ export async function detectPhpProject(directory) {
         autoloadPsr4: {},
         require: {},
         requireDev: {},
-        scripts: {},
+        scriptNames: [],
+        scriptTools: [],
+        ci: { providers: [], phpVersions: [], tools: [] },
         detectedTools: {
             phpunit: false,
             pest: false,
@@ -74,6 +77,7 @@ export async function detectPhpProject(directory) {
             // of silently reporting "no composer.json".
             empty.hasComposerJson = true;
             empty.composerJsonError = err.message;
+            empty.ci = await detectCiConventions(directory);
             return empty;
         }
         empty.hasComposerJson = true;
@@ -93,11 +97,9 @@ export async function detectPhpProject(directory) {
             }
         }
         empty.autoloadPsr4 = psr4;
-        const scripts = {};
-        for (const [k, v] of Object.entries(composer.scripts ?? {})) {
-            scripts[k] = Array.isArray(v) ? v.join(" && ") : String(v);
-        }
-        empty.scripts = scripts;
+        const scripts = composer.scripts ?? {};
+        empty.scriptNames = Object.keys(scripts).sort();
+        empty.scriptTools = knownTools(Object.values(scripts).flatMap((body) => Array.isArray(body) ? body : [body]));
         const all = { ...empty.require, ...empty.requireDev };
         empty.detectedTools = {
             phpunit: has(all, "phpunit"),
@@ -119,7 +121,85 @@ export async function detectPhpProject(directory) {
     catch {
         // no composer.json — stay framework-agnostic, report empty
     }
+    empty.ci = await detectCiConventions(directory);
     return empty;
+}
+const KNOWN_TOOLS = ["phpunit", "pest", "phpstan", "psalm", "phpcs", "php-cs-fixer", "rector", "deptrac", "infection", "mago"];
+function knownTools(values) {
+    const text = values.filter((value) => typeof value === "string").join("\n").toLowerCase();
+    return KNOWN_TOOLS.filter((tool) => new RegExp(`(?:^|[^a-z0-9_-])${tool.replaceAll("-", "[-\\s]?")}(?:$|[^a-z0-9_-])`, "i").test(text));
+}
+async function detectCiConventions(root) {
+    const providers = [];
+    const files = [];
+    try {
+        const workflows = await readdir(join(root, ".github/workflows"), { withFileTypes: true });
+        const names = workflows.filter((entry) => entry.isFile() && /\.ya?ml$/i.test(entry.name)).map((entry) => entry.name).sort().slice(0, 16);
+        if (names.length) {
+            providers.push("github-actions");
+            files.push(...names.map((name) => join(root, ".github/workflows", name)));
+        }
+    }
+    catch { /* GitHub Actions is not configured. */ }
+    const rootCis = [
+        [".gitlab-ci.yml", "gitlab-ci"],
+        [".circleci/config.yml", "circleci"],
+        ["bitbucket-pipelines.yml", "bitbucket-pipelines"],
+        ["azure-pipelines.yml", "azure-pipelines"],
+    ];
+    for (const [name, provider] of rootCis) {
+        try {
+            await access(join(root, name));
+            providers.push(provider);
+            files.push(join(root, name));
+        }
+        catch { /* provider manifest is absent. */ }
+    }
+    const versions = new Set();
+    const tools = new Set();
+    let totalBytes = 0;
+    for (const path of files.slice(0, 20)) {
+        const remainingBytes = 1024 * 1024 - totalBytes;
+        if (remainingBytes <= 0)
+            break;
+        try {
+            const text = await readTextPrefix(path, Math.min(128 * 1024, remainingBytes));
+            totalBytes += Buffer.byteLength(text, "utf8");
+            const lines = text.split(/\r?\n/);
+            for (let index = 0; index < lines.length; index += 1) {
+                const line = lines[index];
+                const phpKey = line.match(/^(\s*)php(?:[-_]version)?\s*:\s*(.*)$/i);
+                if (phpKey) {
+                    const indent = phpKey[1].length;
+                    const value = phpKey[2];
+                    for (const match of value.matchAll(/\b(?:7|8|9)\.\d+(?:\.\d+)?\b/g))
+                        versions.add(match[0]);
+                    if (value.trim() === "") {
+                        for (let nested = index + 1; nested < lines.length; nested += 1) {
+                            const nestedLine = lines[nested];
+                            if (nestedLine.trim() === "")
+                                continue;
+                            const nestedIndent = nestedLine.match(/^\s*/)?.[0].length ?? 0;
+                            // A YAML block sequence may start at the same indentation as
+                            // its mapping key; a sibling mapping key ends the list.
+                            if (nestedIndent <= indent && !/^\s*-\s/.test(nestedLine))
+                                break;
+                            if (/^\s*-\s*/.test(nestedLine)) {
+                                for (const match of nestedLine.matchAll(/\b(?:7|8|9)\.\d+(?:\.\d+)?\b/g))
+                                    versions.add(match[0]);
+                            }
+                        }
+                    }
+                }
+                for (const match of line.matchAll(/\bphp\s*:\s*["']?v?((?:7|8|9)\.\d+(?:\.\d+)?)/gi))
+                    versions.add(match[1]);
+            }
+            for (const tool of knownTools([text]))
+                tools.add(tool);
+        }
+        catch { /* unreadable CI files contribute provider presence only. */ }
+    }
+    return { providers, phpVersions: [...versions].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), tools: KNOWN_TOOLS.filter((tool) => tools.has(tool)) };
 }
 export function formatDetection(info) {
     const lines = [
@@ -138,6 +218,16 @@ export function formatDetection(info) {
         lines.push(`configs: ${info.configs.join(", ")}`);
     if (info.platformPhp)
         lines.push(`composer platform.php: ${info.platformPhp}`);
+    if (info.scriptNames.length)
+        lines.push(`composer scripts: ${info.scriptNames.join(", ")}`);
+    if (info.scriptTools.length)
+        lines.push(`composer script tools: ${info.scriptTools.join(", ")}`);
+    if (info.ci.providers.length)
+        lines.push(`CI: ${info.ci.providers.join(", ")}`);
+    if (info.ci.phpVersions.length)
+        lines.push(`CI PHP versions: ${info.ci.phpVersions.join(", ")}`);
+    if (info.ci.tools.length)
+        lines.push(`CI tools: ${info.ci.tools.join(", ")}`);
     const psr4 = Object.entries(info.autoloadPsr4);
     lines.push(psr4.length
         ? `psr-4: ${psr4.map(([k, v]) => `${k}=>${v.join(", ")}`).join(", ")}`

@@ -1,0 +1,110 @@
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { buildProjectProfile } from "../src/profile.js";
+import { createArchitectureCacheKey } from "../src/architecture/cache.js";
+
+describe("architecture cache key", () => {
+  it("isolates project roots and source content", async () => {
+    const roots = await Promise.all([
+      mkdtemp(join(tmpdir(), "architecture-a-")),
+      mkdtemp(join(tmpdir(), "architecture-b-")),
+    ]);
+    try {
+      for (const root of roots) await writeFile(join(root, "Example.php"), "<?php class Example {}\n");
+      const profiles = await Promise.all(roots.map((root) => buildProjectProfile(root, null)));
+      const keys = await Promise.all(roots.map((root, index) => createArchitectureCacheKey(root, profiles[index]!)));
+      expect(keys[0]!.key).not.toBe(keys[1]!.key);
+      await writeFile(join(roots[0]!, "Example.php"), "<?php class Changed {}\n");
+      const changed = await createArchitectureCacheKey(roots[0]!, await buildProjectProfile(roots[0]!, null));
+      expect(changed.key).not.toBe(keys[0]!.key);
+    } finally {
+      await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
+    }
+  });
+
+  it("labels large files as metadata-only and includes config and lock fingerprints", async () => {
+    const root = await mkdtemp(join(tmpdir(), "architecture-cache-"));
+    try {
+      await writeFile(join(root, "Large.php"), "x".repeat(1024 * 1024 + 1));
+      const profile = await buildProjectProfile(root, null);
+      const metadata = await createArchitectureCacheKey(root, profile);
+      expect(metadata.mode).toBe("metadata");
+      await writeFile(join(root, "php-toolkit.json"), JSON.stringify({ architecture: { layers: [] } }));
+      const configChanged = await createArchitectureCacheKey(root, await buildProjectProfile(root, null));
+      expect(configChanged.key).not.toBe(metadata.key);
+      await writeFile(join(root, "composer.lock"), "{}\n");
+      const lockChanged = await createArchitectureCacheKey(root, await buildProjectProfile(root, null));
+      expect(lockChanged.key).not.toBe(configChanged.key);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("caps PHP file discovery to the requested scan size and records truncation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "architecture-cache-cap-"));
+    try {
+      await writeFile(join(root, "A.php"), "<?php class A {}\n");
+      await writeFile(join(root, "B.php"), "<?php class B {}\n");
+      const profile = await buildProjectProfile(root, null);
+      const identity = await createArchitectureCacheKey(root, profile, 1);
+      expect(identity.files).toBe(1);
+      expect(identity.truncated).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses metadata fingerprints after the 16 MiB aggregate content budget", async () => {
+    const root = await mkdtemp(join(tmpdir(), "architecture-cache-budget-"));
+    try {
+      const content = "x".repeat(1024 * 1024);
+      for (let index = 0; index < 17; index += 1) {
+        await writeFile(join(root, `File${String(index).padStart(2, "0")}.php`), content);
+      }
+      const identity = await createArchitectureCacheKey(root, await buildProjectProfile(root, null));
+      expect(identity.mode).toBe("metadata");
+      expect(identity.fingerprints["File15.php"]).toMatch(/^content:/);
+      expect(identity.fingerprints["File16.php"]).toMatch(/^metadata:/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("applies configured excludes before counting files against the cap", async () => {
+    const root = await mkdtemp(join(tmpdir(), "architecture-cache-excludes-"));
+    try {
+      await mkdir(join(root, "src", "Excluded"), { recursive: true });
+      await writeFile(join(root, "src", "Local.php"), "<?php class Local {}\n");
+      await writeFile(join(root, "src", "Excluded", "Legacy.php"), "<?php class Legacy {}\n");
+      await writeFile(join(root, "php-toolkit.json"), JSON.stringify({
+        architecture: {
+          layers: { Domain: { namespaces: ["App\\Domain\\"], mayDependOn: [] } },
+          exclude: ["./src/Excluded"],
+        },
+      }));
+      const identity = await createArchitectureCacheKey(root, await buildProjectProfile(root, null));
+      expect(identity.files).toBe(1);
+      expect(Object.keys(identity.fingerprints)).toEqual(["src/Local.php"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not discover PHP files through an external directory symlink", async () => {
+    const root = await mkdtemp(join(tmpdir(), "architecture-cache-symlink-"));
+    const outside = await mkdtemp(join(tmpdir(), "architecture-cache-outside-"));
+    try {
+      await mkdir(join(root, "src"));
+      await writeFile(join(root, "src/Local.php"), "<?php class Local {}\n");
+      await writeFile(join(outside, "External.php"), "<?php class External {}\n");
+      await symlink(outside, join(root, "external"));
+      const identity = await createArchitectureCacheKey(root, await buildProjectProfile(root, null));
+      expect(identity.files).toBe(1);
+      expect(Object.keys(identity.fingerprints)).toEqual(["src/Local.php"]);
+    } finally {
+      await Promise.all([rm(root, { recursive: true, force: true }), rm(outside, { recursive: true, force: true })]);
+    }
+  });
+});

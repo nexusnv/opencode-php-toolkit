@@ -8,7 +8,7 @@
 // version back on the next install.
 //
 // Skips entirely when PHP_TOOLKIT_SKIP_AGENT_COPY=1 is set; the rest of the
-// plugin works identically either way. The four php-*.md files can be
+// plugin works identically either way. The five php-*.md files can be
 // removed from ~/.config/opencode/agents/ at any time without breaking
 // anything else.
 import { access, cp, mkdir } from "node:fs/promises";
@@ -28,6 +28,7 @@ const files = [
   "agents/php-debugger.md",
   "agents/php-modernizer.md",
   "agents/php-tester.md",
+  "agents/php-architect.md",
 ];
 
 async function exists(path) {
