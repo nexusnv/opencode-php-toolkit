@@ -93,6 +93,15 @@ opencode plugin add file:///home/leonidas/dev/nexusnv/opencode-php-toolkit
   - `php_metrics` — local usage metrics; `reset: true` clears this project's metrics, `export: true` dumps the snapshot as raw JSON (absolute project path omitted)
 - Hooks: `prompt` runs deterministic routing for PHP-context prompts, `context` adds the stable L0 engineering constitution plus one compact routing-state part, `tool.execute.before` warns on destructive `composer update` / `rector process` without `--dry-run` / `php-cs-fixer fix` without `--dry-run`.
 
+The destructive-command guard inspects only shell command inputs (a raw command
+string or an object's `command` field) and ignores quoted text, so a commit
+message mentioning `rector process` does not warn. The warning goes to stderr:
+OpenCode v2's `execute.before` hook is void-only, so it cannot block the tool,
+and mutating the result in `execute.after` was rejected because it would alter
+structured tool output. The pattern set remains the four commands above;
+`composer remove` and `composer reinstall` are reversible from
+`composer.json`/`composer.lock` and would add false positives.
+
 ## Verification tool (`php_verify`)
 
 `php_verify` runs the checks the project actually has and returns one report.
